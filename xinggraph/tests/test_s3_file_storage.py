@@ -1,0 +1,124 @@
+import os
+import pathlib
+from uuid import uuid4
+
+import xinggraph
+from xinggraph.infrastructure.files.storage import get_file_storage, get_storage_config
+from xinggraph.modules.search.operations import get_history
+from xinggraph.modules.users.methods import get_default_user
+from xinggraph.shared.logging_utils import get_logger
+from xinggraph.modules.search.types import SearchType
+
+logger = get_logger()
+
+
+async def main():
+    bucket_name = os.getenv("STORAGE_BUCKET_NAME")
+    test_run_id = uuid4()
+    data_directory_path = f"s3://{bucket_name}/{test_run_id}/data"
+    xinggraph.config.data_root_directory(data_directory_path)
+    xinggraph_directory_path = f"s3://{bucket_name}/{test_run_id}/system"
+    xinggraph.config.system_root_directory(xinggraph_directory_path)
+
+    await xinggraph.prune.prune_data()
+    await xinggraph.prune.prune_system(metadata=True)
+
+    dataset_name = "artificial_intelligence"
+
+    ai_text_file_path = os.path.join(
+        pathlib.Path(__file__).parent, "test_data/artificial-intelligence.pdf"
+    )
+    await xinggraph.add([ai_text_file_path], dataset_name)
+
+    text = """A large language model (LLM) is a language model notable for its ability to achieve general-purpose language generation and other natural language processing tasks such as classification. LLMs acquire these abilities by learning statistical relationships from text documents during a computationally intensive self-supervised and semi-supervised training process. LLMs can be used for text generation, a form of generative AI, by taking an input text and repeatedly predicting the next token or word.
+    LLMs are artificial neural networks. The largest and most capable, as of March 2024, are built with a decoder-only transformer-based architecture while some recent implementations are based on other architectures, such as recurrent neural network variants and Mamba (a state space model).
+    Up to 2020, fine tuning was the only way a model could be adapted to be able to accomplish specific tasks. Larger sized models, such as GPT-3, however, can be prompt-engineered to achieve similar results.[6] They are thought to acquire knowledge about syntax, semantics and "ontology" inherent in human language corpora, but also inaccuracies and biases present in the corpora.
+    Some notable LLMs are OpenAI's GPT series of models (e.g., GPT-3.5 and GPT-4, used in ChatGPT and Microsoft Copilot), Google's PaLM and Gemini (the latter of which is currently used in the chatbot of the same name), xAI's Grok, Meta's LLaMA family of open-source models, Anthropic's Claude models, Mistral AI's open source models, and Databricks' open source DBRX.
+    """
+
+    await xinggraph.add([text], dataset_name)
+
+    await xinggraph.cognify([dataset_name])
+
+    from xinggraph.infrastructure.databases.vector import get_vector_engine_async
+
+    vector_engine = await get_vector_engine_async()
+    random_node = (await vector_engine.search("Entity_name", "AI", include_payload=True))[0]
+    random_node_name = random_node.payload["text"]
+
+    search_results = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION, query_text=random_node_name
+    )
+    assert len(search_results) != 0, "The search results list is empty."
+    print("\n\nExtracted sentences are:\n")
+    for result in search_results:
+        print(f"{result}\n")
+
+    search_results = await xinggraph.search(query_type=SearchType.CHUNKS, query_text=random_node_name)
+    assert len(search_results) != 0, "The search results list is empty."
+    print("\n\nExtracted chunks are:\n")
+    for result in search_results:
+        print(f"{result}\n")
+
+    search_results = await xinggraph.search(
+        query_type=SearchType.SUMMARIES, query_text=random_node_name
+    )
+    assert len(search_results) != 0, "Query related summaries don't exist."
+    print("\nExtracted summaries are:\n")
+    for result in search_results:
+        print(f"{result}\n")
+
+    user = await get_default_user()
+    history = await get_history(user.id)
+
+    assert len(history) == 6, "Search history is not correct."
+
+    # Assert local data files are cleaned properly
+    await xinggraph.prune.prune_data()
+    data_root_directory = get_storage_config()["data_root_directory"]
+    assert not os.path.isdir(data_root_directory), "Local data files are not deleted"
+
+    # Assert relational, vector and graph databases have been cleaned properly
+    await xinggraph.prune.prune_system(metadata=True)
+
+    connection = await vector_engine.get_connection()
+    collection_names = await connection.table_names()
+    assert len(collection_names) == 0, "LanceDB vector database is not empty"
+
+    from xinggraph.infrastructure.databases.relational import get_relational_engine
+
+    db_path = get_relational_engine().db_path
+    dir_path = os.path.dirname(db_path)
+    file_name = os.path.basename(db_path)
+    file_storage = get_file_storage(dir_path)
+
+    assert not await file_storage.file_exists(file_name), (
+        "SQLite relational database is not deleted"
+    )
+
+    from xinggraph.infrastructure.databases.graph import get_graph_config
+
+    graph_config = get_graph_config()
+    # For Ladybug/Kuzu, check if database file doesn't exist.
+    # For older versions or other providers, check if directory is empty
+    if graph_config.graph_database_provider.lower() in ("ladybug", "kuzu"):
+        graph_dir = os.path.dirname(graph_config.graph_file_path)
+        graph_file = os.path.basename(graph_config.graph_file_path)
+        graph_storage = get_file_storage(graph_dir)
+        assert not await graph_storage.file_exists(graph_file), (
+            "Ladybug graph database file still exists"
+        )
+    else:
+        graph_storage = get_file_storage(graph_config.graph_file_path)
+        graph_exists = await graph_storage.file_exists("")
+        graph_is_file = await graph_storage.is_file("")
+        graph_files = await graph_storage.list_files("", recursive=True)
+        assert not graph_exists or (not graph_is_file and not graph_files), (
+            "Graph database directory is not empty"
+        )
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main(), debug=True)

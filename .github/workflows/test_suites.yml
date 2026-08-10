@@ -1,0 +1,413 @@
+name: Test Suites
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUNTIME__LOG_LEVEL: ERROR
+  ENV: 'dev'
+
+jobs:
+  # ── Build pre-baked CI container ──────────────────────────────────────
+  build-ci-env:
+    name: Build CI Environment
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    outputs:
+      ci-image: ${{ steps.set-image.outputs.image }}
+    steps:
+      - name: Sparse checkout (deps only)
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            pyproject.toml
+            uv.lock
+            README.md
+            Dockerfile.ci
+            .dockerignore.ci
+          sparse-checkout-cone-mode: false
+
+      - name: Compute dep hash and image tag
+        id: set-image
+        run: |
+          DEP_HASH=$(sha256sum pyproject.toml uv.lock | sha256sum | head -c 16)
+          IMAGE="ghcr.io/${{ github.repository }}/ci-env:deps-${DEP_HASH}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "dep_hash=${DEP_HASH}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${IMAGE}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists
+        id: check
+        run: |
+          if docker manifest inspect "${{ steps.set-image.outputs.image }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image already exists, skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image not found, will build."
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push CI image
+        if: steps.check.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ci
+          push: true
+          tags: ${{ steps.set-image.outputs.image }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/ci-env:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/ci-env:buildcache,mode=max
+
+  pre-test:
+    name: basic checks
+    uses: ./.github/workflows/pre_test.yml
+
+  basic-tests:
+    name: Basic Tests
+    uses: ./.github/workflows/basic_tests.yml
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  e2e-tests:
+    name: End-to-End Tests
+    uses: ./.github/workflows/e2e_tests.yml
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  cli-tests:
+    name: CLI Tests
+    uses: ./.github/workflows/cli_tests.yml
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  slow-e2e-tests:
+    name: Slow End-to-End Tests
+    uses: ./.github/workflows/slow_e2e_tests.yml
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  graph-db-tests:
+    name: Graph Database Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/graph_db_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  vector-db-tests:
+    name: Vector DB Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/vector_db_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  example-tests:
+    name: Example Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/examples_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  notebook-tests:
+    name: Notebook Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/notebooks_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  different-os-tests-basic:
+    name: OS and Python Tests Ubuntu
+    uses: ./.github/workflows/test_different_operating_systems.yml
+    with:
+      python-versions: '["3.10.x", "3.11.x", "3.12.x", "3.13.x", "3.14.x"]'
+      os: '["ubuntu-22.04"]'
+      # postgres so the SQL cache adapter tests run instead of skipping; omitted
+      # on macos/windows (extended) where psycopg2 has no prebuilt wheels.
+      extra-dependencies: 'postgres'
+    secrets: inherit
+
+  different-os-tests-extended:
+    name: OS and Python Tests Extended
+    uses: ./.github/workflows/test_different_operating_systems.yml
+    with:
+      python-versions: '["3.13.x"]'
+      os: '["macos-15", "windows-latest"]'
+    secrets: inherit
+
+  llm-tests:
+    name: LLM Test Suite
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/test_llms.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  s3-file-storage-test:
+    name: S3 File Storage Test
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/test_s3_file_storage.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  integration-tests:
+    name: Run Integration Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/integration_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  mcp-test:
+    name: MCP Tests
+    uses: ./.github/workflows/test_mcp.yml
+    secrets: inherit
+
+  docker-compose-test:
+    name: Docker Compose Test
+    uses: ./.github/workflows/docker_compose.yml
+    secrets: inherit
+
+  docker-ci-test:
+    name: Docker CI test
+    uses: ./.github/workflows/backend_docker_build_test.yml
+    secrets: inherit
+
+  temporal-graph-tests:
+    name: Temporal Graph Test
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/temporal_graph_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  search-db-tests:
+    name: Search Test on Different DBs
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/search_db_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  relational-db-migration-tests:
+    name: Relational DB Migration Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/relational_db_migration_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  # NOTE: intentionally excluded from the `notify` aggregator below — this is
+  # external infra (Modal + Azure secrets), informational only; it must not gate
+  # merges. (`continue-on-error` is not allowed on a reusable-workflow job.)
+  distributed-tests:
+    name: Distributed XingGraph Test
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/distributed_test.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  db-examples-tests:
+    name: DB Examples Tests
+    needs: [ build-ci-env ]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/db_examples_tests.yml
+    with:
+      ci-image: ${{ needs.build-ci-env.outputs.ci-image || '' }}
+    secrets: inherit
+
+  notify:
+    name: Test Completion Status
+    needs: [
+      pre-test,
+      basic-tests,
+      e2e-tests,
+      cli-tests,
+      slow-e2e-tests,
+      graph-db-tests,
+      vector-db-tests,
+      example-tests,
+      notebook-tests,
+      different-os-tests-basic,
+      different-os-tests-extended,
+      llm-tests,
+      s3-file-storage-test,
+      integration-tests,
+      mcp-test,
+      docker-compose-test,
+      docker-ci-test,
+      temporal-graph-tests,
+      search-db-tests,
+      relational-db-migration-tests,
+      db-examples-tests,
+    ]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Check Status
+        run: |
+          if [[ "${{ needs.pre-test.result }}" == "success" &&
+                "${{ needs.basic-tests.result }}" == "success" &&
+                "${{ needs.e2e-tests.result }}" == "success" &&
+                "${{ needs.cli-tests.result }}" == "success" &&
+                "${{ needs.slow-e2e-tests.result }}" == "success" &&
+                "${{ needs.graph-db-tests.result }}" == "success" &&
+                "${{ needs.vector-db-tests.result }}" == "success" &&
+                "${{ needs.example-tests.result }}" == "success" &&
+                "${{ needs.notebook-tests.result }}" == "success" &&
+                "${{ needs.different-os-tests-basic.result }}" == "success" &&
+                "${{ needs.different-os-tests-extended.result }}" == "success" &&
+                "${{ needs.llm-tests.result }}" == "success" &&
+                "${{ needs.s3-file-storage-test.result }}" == "success" &&
+                "${{ needs.integration-tests.result }}" == "success" &&
+                "${{ needs.mcp-test.result }}" == "success" &&
+                "${{ needs.docker-compose-test.result }}" == "success" &&
+                "${{ needs.docker-ci-test.result }}" == "success" &&
+                "${{ needs.temporal-graph-tests.result }}" == "success" &&
+                "${{ needs.search-db-tests.result }}" == "success" &&
+                "${{ needs.relational-db-migration-tests.result }}" == "success" &&
+                "${{ needs.db-examples-tests.result }}" == "success" ]]; then
+            echo "All test suites completed successfully!"
+          else
+            echo "One or more test suites failed."
+            exit 1
+          fi
+
+  # ── Advisory Claude Code review — pulls the private skill from xinggraph-ci at runtime ──
+  # The rubric + Slack map live in the private xinggraph-ci repo; this job carries no review
+  # logic. Runs only after the suite is green (needs: notify), core-team PRs only, advisory.
+  claude-review:
+    name: Claude Code Review
+    needs: [ notify ]
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Core-team gate
+        id: gate
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          author_lc="$(printf '%s' "$AUTHOR" | tr '[:upper:]' '[:lower:]')"
+          if grep -vE '^[[:space:]]*#' .github/core-team.txt \
+               | sed 's/^@//' | tr '[:upper:]' '[:lower:]' | grep -qxF "$author_lc"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "PR author '$AUTHOR' not in core-team.txt — skipping."
+          fi
+
+      - name: Mint private-repo token
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: xinggraph-ci
+
+      - name: Fetch private review skill + slack map
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/xinggraph-ci
+          token: ${{ steps.app-token.outputs.token }}
+          path: .ci-private
+
+      - name: Stage skill into the user skills dir
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        run: |
+          # Stage into the USER skills dir ($HOME/.claude), NOT the repo's .claude/.
+          # claude-code-action sanitizes the repo .claude for untrusted PR heads
+          # (it moves the working-tree .claude to .claude-pr/ and restores a clean
+          # .claude from the base branch), which wipes the staged private skill and
+          # leaves /pr-review unresolved -> 0 turns, nothing posted. $HOME/.claude is
+          # untouched by that sanitization and is loaded via settingSources: [user,...].
+          mkdir -p "$HOME/.claude/skills"
+          cp -r .ci-private/.claude/skills/pr-review "$HOME/.claude/skills/"
+
+      - name: Claude Code review
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: "/pr-review"
+          claude_args: >-
+            --allowed-tools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
+            --max-turns 20
+            --model claude-sonnet-4-5-20250929
+
+      - name: DM review summary to PR author on Slack
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+        run: python3 .ci-private/scripts/pr_review_slack_notify.py

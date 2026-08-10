@@ -1,0 +1,8 @@
+# Code owners for the xinggraph repository.
+#
+# GitHub auto-requests reviews from these owners when a PR touches their paths.
+# Order matters: the LAST matching pattern wins. Keep most-specific rules at the
+# bottom.
+#
+# TODO: replace @XINGGRAPH_OWNER below with your real maintainer handles.
+*  @XINGGRAPH_OWNER

@@ -1,0 +1,83 @@
+from uuid import UUID, uuid5, NAMESPACE_OID
+from typing import Any, Dict, List, Optional, Tuple
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert
+from xinggraph.modules.engine.utils import generate_edge_id
+
+from xinggraph.modules.graph.models.Edge import Edge
+from xinggraph.infrastructure.databases.relational.with_async_session import with_async_session
+from xinggraph.modules.graph.methods.sanitize_relational_payload import sanitize_relational_payload
+
+UPSERT_BATCH_SIZE = 1000
+
+
+# When ``session`` is passed by the caller this function does NOT commit —
+# the caller is responsible for committing. When no session is provided,
+# ``@with_async_session`` opens one and commits it.
+@with_async_session
+async def upsert_edges(
+    edges: List[Tuple[UUID, UUID, str, Dict[str, Any]]],
+    tenant_id: UUID,
+    user_id: UUID,
+    data_id: UUID,
+    dataset_id: UUID,
+    session: AsyncSession,
+    pipeline_run_id: Optional[UUID] = None,
+):
+    """
+    Adds edges to the edges table.
+
+    Parameters:
+    -----------
+        - edges (list): A list of edges to be added to the graph.
+    """
+    edges_to_add = []
+
+    for edge in edges:
+        edge_text = (
+            edge[3]["edge_text"] if edge[2] == "contains" and "edge_text" in edge[3] else edge[2]
+        )
+        sanitized_edge_text = sanitize_relational_payload(edge_text)
+        sanitized_label = (
+            sanitize_relational_payload(edge[2]) if edge[2] == "contains" else sanitized_edge_text
+        )
+
+        edges_to_add.append(
+            {
+                "id": uuid5(
+                    NAMESPACE_OID,
+                    str(tenant_id)
+                    + str(user_id)
+                    + str(dataset_id)
+                    + str(edge[0])
+                    + str(sanitized_edge_text)
+                    + str(edge[1]),
+                ),
+                "slug": generate_edge_id(sanitized_edge_text),
+                "user_id": user_id,
+                "data_id": data_id,
+                "dataset_id": dataset_id,
+                "pipeline_run_id": pipeline_run_id,
+                "source_node_id": edge[0],
+                "destination_node_id": edge[1],
+                "relationship_name": sanitized_edge_text,
+                "label": sanitized_label,
+                "attributes": sanitize_relational_payload(jsonable_encoder(edge[3])),
+            }
+        )
+
+    if not edges_to_add:
+        return
+
+    for start_index in range(0, len(edges_to_add), UPSERT_BATCH_SIZE):
+        edge_batch = edges_to_add[start_index : start_index + UPSERT_BATCH_SIZE]
+        # on_conflict_do_nothing intentionally preserves the FIRST run's
+        # pipeline_run_id on a re-cognify (see upsert_nodes for the full rationale):
+        # the ledger id is keyed by logical identity, not by run, so overwriting
+        # the tag would let a later run's rollback delete an edge an earlier
+        # successful run created.
+        upsert_statement = (
+            insert(Edge).values(edge_batch).on_conflict_do_nothing(index_elements=["id"])
+        )
+        await session.execute(upsert_statement)

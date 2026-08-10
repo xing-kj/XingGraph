@@ -1,0 +1,603 @@
+<div align="center">
+  <a href="https://github.com/xing-kj/xinggraph">
+    <img src="https://raw.githubusercontent.com/xing-kj/xinggraph/refs/heads/main/assets/xinggraph-logo-transparent.png" alt="XingGraph Logo" height="60">
+  </a>
+
+  <br />
+
+  xinggraph‑mcp - Run xinggraph’s memory engine as a Model Context Protocol server
+
+  <p align="center">
+  <a href="https://www.youtube.com/watch?v=1bezuvLwJmw&t=2s">Demo</a>
+  .
+  <a href="https://xinggraph.ai">Learn more</a>
+  ·
+  <a href="https://discord.gg/NQPKmU5CCg">Join Discord</a>
+  ·
+  <a href="https://www.reddit.com/r/AIMemory/">Join r/AIMemory</a>
+  </p>
+
+
+  [![GitHub forks](https://img.shields.io/github/forks/xing-kj/xinggraph.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/xing-kj/xinggraph/network/)
+  [![GitHub stars](https://img.shields.io/github/stars/xing-kj/xinggraph.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/xing-kj/xinggraph/stargazers/)
+  [![GitHub commits](https://badgen.net/github/commits/xing-kj/xinggraph)](https://GitHub.com/xing-kj/xinggraph/commit/)
+  [![Github tag](https://badgen.net/github/tag/xing-kj/xinggraph)](https://github.com/xing-kj/xinggraph/tags/)
+  [![Downloads](https://static.pepy.tech/badge/xinggraph)](https://pepy.tech/project/xinggraph)
+  [![License](https://img.shields.io/github/license/xing-kj/xinggraph?colorA=00C586&colorB=000000)](https://github.com/xing-kj/xinggraph/blob/main/LICENSE)
+  [![Contributors](https://img.shields.io/github/contributors/xing-kj/xinggraph?colorA=00C586&colorB=000000)](https://github.com/xing-kj/xinggraph/graphs/contributors)
+
+<a href="https://www.producthunt.com/posts/xinggraph?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_souce=badge-xinggraph" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=946346&theme=light&period=daily&t=1744472480704" alt="xinggraph - Memory&#0032;for&#0032;AI&#0032;Agents&#0032;&#0032;in&#0032;5&#0032;lines&#0032;of&#0032;code | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+
+<a href="https://trendshift.io/repositories/13955" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13955" alt="xing-kj%2Fxinggraph | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
+
+Build memory for Agents and query from any client that speaks MCP – in your terminal or IDE.
+
+</div>
+
+## ✨ Features
+
+- Multiple transports – choose Streamable HTTP --transport http (recommended for web deployments), SSE --transport sse (real‑time streaming), or stdio (classic pipe, default)
+- **Cloud Mode** – connect to [XingGraph Cloud](https://www.xinggraph.ai) via `--serve-url` or `XINGGRAPH_SERVICE_URL` env var (see [Connection Modes](#-connection-modes))
+- **API Mode** – connect to an already running XingGraph FastAPI server (see [Connection Modes](#-connection-modes))
+- **Minimal Memory API** – exposes only `remember`, `recall`, and `forget` for agent memory workflows
+- Integrated logging – all actions written to a rotating file (see get_log_file_location()) and mirrored to console in dev
+- Session-aware memory – store fast session cache entries or permanent graph memory through one `remember` tool
+- Focused recall – query memory through one `recall` tool with optional session and search controls
+- Simple deletion – remove a dataset or all owned memory through one `forget` tool
+
+Please refer to our documentation [here](https://docs.xinggraph.ai/how-to-guides/deployment/mcp) for further information.
+
+## 🚀 Quick Start
+
+1. Clone xinggraph repo
+    ```
+    git clone https://github.com/xing-kj/xinggraph.git
+    ```
+2. Navigate to xinggraph-mcp subdirectory
+    ```
+    cd xinggraph/xinggraph-mcp
+    ```
+3. Install uv if you don't have one
+    ```
+    pip install uv
+    ```
+4. Install all the dependencies you need for xinggraph mcp server with uv
+    ```
+    uv sync --dev --all-extras --reinstall
+    ```
+5. Activate the virtual environment in xinggraph mcp directory
+    ```
+    source .venv/bin/activate
+    ```
+6. Set up your OpenAI API key in .env for a quick setup with the default xinggraph configurations
+    ```
+    LLM_API_KEY="YOUR_OPENAI_API_KEY"
+    ```
+7. (Optional — running from source only) Build the MCP App workspace UI bundle. Requires Node.js. Docker users skip this; the image build runs it automatically.
+    ```
+    cd apps-src && npm install && npm run build && cd ..
+    ```
+    This produces `src/app_bundles/visualize-graph.html`, which is gitignored. If you skip this step, `visualize_graph_ui` and the workspace tools will raise a clear error pointing back to this command.
+8. Run xinggraph mcp server with stdio (default)
+    ```
+    python src/server.py
+    ```
+    or stream responses over SSE
+    ```
+    python src/server.py --transport sse
+    ```
+    or run with Streamable HTTP transport (recommended for web deployments)
+    ```
+    python src/server.py --transport http --host 127.0.0.1 --port 8000 --path /mcp
+    ```
+
+You can do more advanced configurations by creating .env file using our <a href="https://github.com/xing-kj/xinggraph/blob/main/.env.template">template.</a>
+To use different LLM providers / database configurations, and for more info check out our <a href="https://docs.xinggraph.ai">documentation</a>.
+
+
+## 🐳 Docker Usage
+
+If you'd rather run xinggraph-mcp in a container, you have two options:
+
+1. **Build locally**
+   1. Make sure you are in /xinggraph root directory and have a fresh `.env` containing only your `LLM_API_KEY` (and your chosen settings).
+   2. Remove any old image and rebuild:
+      ```bash
+      docker rmi xinggraph/xinggraph-mcp:main || true
+      docker build --no-cache -f xinggraph-mcp/Dockerfile -t xinggraph/xinggraph-mcp:main .
+      ```
+   3. Run it:
+      ```bash
+      # For HTTP transport (recommended for web deployments)
+      docker run -e TRANSPORT_MODE=http --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+      # For SSE transport
+      docker run -e TRANSPORT_MODE=sse --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+      # For stdio transport (default)
+      docker run -e TRANSPORT_MODE=stdio --env-file ./.env --rm -it xinggraph/xinggraph-mcp:main
+      ```
+
+      **Installing optional dependencies at runtime:**
+
+      You can install optional dependencies when running the container by setting the `EXTRAS` environment variable:
+      ```bash
+      # Install a single optional dependency group at runtime
+      docker run \
+        -e TRANSPORT_MODE=http \
+        -e EXTRAS=aws \
+        --env-file ./.env \
+        -p 8000:8000 \
+        --rm -it xinggraph/xinggraph-mcp:main
+
+      # Install multiple optional dependency groups at runtime (comma-separated)
+      docker run \
+        -e TRANSPORT_MODE=sse \
+        -e EXTRAS=aws,postgres,neo4j \
+        --env-file ./.env \
+        -p 8000:8000 \
+        --rm -it xinggraph/xinggraph-mcp:main
+      ```
+
+      **Available optional dependency groups:**
+      - `aws` - S3 storage support
+      - `postgres` / `postgres-binary` - PostgreSQL database support
+      - `neo4j` - Neo4j graph database support
+      - `neptune` - AWS Neptune support
+      - `chromadb` - ChromaDB vector store support
+      - `scraping` - Web scraping capabilities
+      - `distributed` - Modal distributed execution
+      - `langchain` - LangChain integration
+      - `llama-index` - LlamaIndex integration
+      - `anthropic` - Anthropic models
+      - `groq` - Groq models
+      - `mistral` - Mistral models
+      - `ollama` / `huggingface` - Local model support
+      - `docs` - Document processing
+      - `codegraph` - Code analysis
+      - `tracing` - OpenTelemetry tracing
+      - `redis` - Redis support
+      - And more (see [pyproject.toml](https://github.com/xing-kj/xinggraph/blob/main/pyproject.toml) for full list)
+2. **Pull from Docker Hub** (no build required):
+
+   The image is published to Docker Hub on every push to `main`. If you have **not** cloned the
+   repo, create the `.env` file the run commands expect first — it needs at least your LLM key:
+   ```bash
+   # Pull the prebuilt image
+   docker pull xinggraph/xinggraph-mcp:main
+
+   # Create a minimal .env in the current directory (no repo checkout required)
+   echo 'LLM_API_KEY="YOUR_OPENAI_API_KEY"' > .env
+   ```
+   ```bash
+   # With HTTP transport (recommended for web deployments)
+   docker run -e TRANSPORT_MODE=http --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+   # With SSE transport
+   docker run -e TRANSPORT_MODE=sse --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+   # With stdio transport (default)
+   docker run -e TRANSPORT_MODE=stdio --env-file ./.env --rm -it xinggraph/xinggraph-mcp:main
+   ```
+
+   **With runtime installation of optional dependencies:**
+   ```bash
+   # Install optional dependencies from Docker Hub image
+   docker run \
+     -e TRANSPORT_MODE=http \
+     -e EXTRAS=aws,postgres \
+     --env-file ./.env \
+     -p 8000:8000 \
+     --rm -it xinggraph/xinggraph-mcp:main
+   ```
+
+### **Important: Docker vs Direct Usage**
+**Docker uses environment variables**, not command line arguments:
+- ✅ Docker: `-e TRANSPORT_MODE=http`
+- ❌ Docker: `--transport http` (won't work)
+
+**Direct Python usage** uses command line arguments:
+- ✅ Direct: `python src/server.py --transport http`
+- ❌ Direct: `-e TRANSPORT_MODE=http` (won't work)
+
+### **Docker API Mode**
+
+To connect the MCP Docker container to a XingGraph API server running on your host machine:
+
+#### **Simple Usage (Automatic localhost handling):**
+```bash
+# Start your XingGraph API server on the host
+python -m xinggraph.api.client
+
+# Run MCP container in API mode - localhost is automatically converted!
+docker run \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://localhost:8000 \
+  -e API_TOKEN=your_auth_token \
+  -p 8001:8000 \
+  --rm -it xinggraph/xinggraph-mcp:main
+```
+**Note:** The container will automatically convert `localhost` to `host.docker.internal` on Mac/Windows/Docker Desktop. You'll see a message in the logs showing the conversion.
+
+#### **Explicit host.docker.internal (Mac/Windows):**
+```bash
+# Or explicitly use host.docker.internal
+docker run \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://host.docker.internal:8000 \
+  -e API_TOKEN=your_auth_token \
+  -p 8001:8000 \
+  --rm -it xinggraph/xinggraph-mcp:main
+```
+
+#### **On Linux (use host network or container IP):**
+```bash
+# Option 1: Use host network (simplest)
+docker run \
+  --network host \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://localhost:8000 \
+  -e API_TOKEN=your_auth_token \
+  --rm -it xinggraph/xinggraph-mcp:main
+
+# Option 2: Use host IP address
+# First, get your host IP: ip addr show docker0
+docker run \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://172.17.0.1:8000 \
+  -e API_TOKEN=your_auth_token \
+  -p 8001:8000 \
+  --rm -it xinggraph/xinggraph-mcp:main
+```
+
+**Environment variables for API mode:**
+- `API_URL`: URL of the running XingGraph API server
+- `API_TOKEN`: Authentication token (optional, required if API has authentication enabled)
+
+**Note:** When running in API mode:
+- Database migrations are automatically skipped (API server handles its own DB)
+- Some features are limited (see [API Mode Limitations](#-api-mode))
+
+
+## 🔗 MCP Client Configuration
+
+After starting your XingGraph MCP server with Docker, you need to configure your MCP client to connect to it.
+
+### **SSE Transport Configuration** (Recommended)
+
+**Start the server with SSE transport:**
+```bash
+docker run -e TRANSPORT_MODE=sse --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+```
+
+**Configure your MCP client:**
+
+#### **Claude CLI (Easiest)**
+```bash
+claude mcp add xinggraph-sse -t sse http://localhost:8000/sse
+```
+
+**Verify the connection:**
+```bash
+claude mcp list
+```
+
+You should see your server connected:
+```
+Checking MCP server health...
+
+xinggraph-sse: http://localhost:8000/sse (SSE) - ✓ Connected
+```
+
+#### **Manual Configuration**
+
+**Claude (`~/.claude.json`)**
+```json
+{
+  "mcpServers": {
+    "xinggraph": {
+      "type": "sse",
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+**Cursor (`~/.cursor/mcp.json`)**
+```json
+{
+  "mcpServers": {
+    "xinggraph-sse": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+### **HTTP Transport Configuration** (Alternative)
+
+**Start the server with HTTP transport:**
+```bash
+docker run -e TRANSPORT_MODE=http --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
+```
+
+**Configure your MCP client:**
+
+#### **Claude CLI (Easiest)**
+```bash
+claude mcp add xinggraph-http -t http http://localhost:8000/mcp
+```
+
+**Verify the connection:**
+```bash
+claude mcp list
+```
+
+You should see your server connected:
+```
+Checking MCP server health...
+
+xinggraph-http: http://localhost:8000/mcp (HTTP) - ✓ Connected
+```
+
+#### **Manual Configuration**
+
+**Claude (`~/.claude.json`)**
+```json
+{
+  "mcpServers": {
+    "xinggraph": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+**Cursor (`~/.cursor/mcp.json`)**
+```json
+{
+  "mcpServers": {
+    "xinggraph-http": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+### **Dual Configuration Example**
+You can configure both transports simultaneously for testing:
+
+```json
+{
+  "mcpServers": {
+    "xinggraph-sse": {
+      "type": "sse",
+      "url": "http://localhost:8000/sse"
+    },
+    "xinggraph-http": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+**Note:** Only enable the server you're actually running to avoid connection errors.
+
+## 🌐 Connection Modes
+
+The MCP server supports three connection modes:
+
+### **Direct Mode** (Default)
+The MCP server directly imports and uses the xinggraph library with local databases (SQLite, LanceDB, Ladybug). This is the default mode with full feature support.
+
+### **Cloud Mode**
+Connect to [XingGraph Cloud](https://www.xinggraph.ai) or a remote XingGraph instance. The server calls `xinggraph.serve()` at startup, and all SDK operations transparently route to the cloud. No local databases needed.
+
+**Via CLI flags:**
+```bash
+python src/server.py --serve-url https://your-instance.xinggraph.ai --serve-api-key ck_...
+```
+
+**Via environment variables (zero-config):**
+```bash
+export XINGGRAPH_SERVICE_URL="https://your-instance.xinggraph.ai"
+export XINGGRAPH_API_KEY="ck_..."
+python src/server.py
+```
+
+**Cloud Mode with Docker:**
+```bash
+docker run \
+  -e TRANSPORT_MODE=sse \
+  -e XINGGRAPH_SERVICE_URL=https://your-instance.xinggraph.ai \
+  -e XINGGRAPH_API_KEY=ck_... \
+  -p 8000:8000 \
+  --rm -it xinggraph/xinggraph-mcp:main
+```
+
+**Cloud Mode arguments / environment variables:**
+- `--serve-url` / `XINGGRAPH_SERVICE_URL`: XingGraph Cloud or remote instance URL
+- `--serve-api-key` / `XINGGRAPH_API_KEY`: API key for the instance
+
+Database migrations are automatically skipped in Cloud mode.
+
+### **API Mode**
+The MCP server connects to an already running XingGraph FastAPI server via HTTP requests. This is useful when:
+- You have a centralized XingGraph API server running
+- You want to separate the MCP server from the knowledge graph backend
+- You need multiple MCP servers to share the same knowledge graph
+
+**Starting the MCP server in API mode:**
+```bash
+# Start your XingGraph FastAPI server first (default port 8000)
+cd /path/to/xinggraph
+python -m xinggraph.api.client
+
+# Then start the MCP server in API mode
+cd xinggraph-mcp
+python src/server.py --api-url http://localhost:8000 --api-token YOUR_AUTH_TOKEN
+```
+
+**API Mode with different transports:**
+```bash
+# With SSE transport
+python src/server.py --transport sse --api-url http://localhost:8000 --api-token YOUR_TOKEN
+
+# With HTTP transport
+python src/server.py --transport http --api-url http://localhost:8000 --api-token YOUR_TOKEN
+```
+
+**API Mode with Docker:**
+```bash
+# On Mac/Windows (use host.docker.internal to access host)
+docker run \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://host.docker.internal:8000 \
+  -e API_TOKEN=YOUR_TOKEN \
+  -p 8001:8000 \
+  --rm -it xinggraph/xinggraph-mcp:main
+
+# On Linux (use host network)
+docker run \
+  --network host \
+  -e TRANSPORT_MODE=sse \
+  -e API_URL=http://localhost:8000 \
+  -e API_TOKEN=YOUR_TOKEN \
+  --rm -it xinggraph/xinggraph-mcp:main
+```
+
+**Command-line arguments for API mode:**
+- `--api-url`: Base URL of the running XingGraph FastAPI server (e.g., `http://localhost:8000`)
+- `--api-token`: Authentication token for the API (optional, required if API has authentication enabled)
+
+**Docker environment variables for API mode:**
+- `API_URL`: Base URL of the running XingGraph FastAPI server
+- `API_TOKEN`: Authentication token (optional, required if API has authentication enabled)
+
+**API Mode behavior:**
+The MCP server intentionally exposes only the memory API: `remember`, `recall`, and `forget`.
+In API mode these tools call the XingGraph API server endpoints directly. Operational helpers such as
+`cognify`, `search`, `list_data`, `delete`, `prune`, `improve`, and document retrieval helpers are
+kept internal and are not exposed as MCP tools.
+
+## 💻 Basic Usage
+
+The MCP server exposes its functionality through tools. Call them from any MCP client (Cursor, Claude Desktop, Cline, Roo and more).
+
+
+### Available Tools
+
+The MCP server exposes three tools:
+
+- **remember**: Store data in memory. With `session_id`: fast session cache. Without `session_id`: permanent graph memory
+- **recall**: Search memory with auto-routing. Searches session cache first when `session_id` is provided, then falls through to the permanent graph
+- **forget**: Delete memory by dataset name, or delete all owned memory with `everything=True`
+
+**Workspace UI Tools** (MCP Apps — Cursor, Claude Desktop, etc.):
+
+- **visualize_graph_ui**: Open the workspace and render the current knowledge graph
+- **upload_file_ui**: Open the workspace for file upload
+- **open_xinggraph_workspace**: Generic "open the xinggraph UI" entry point
+- **cognify_file**: Ingest an uploaded file (used by the workspace; accepts base64 content)
+- **list_datasets_json / list_dataset_data_json / create_dataset_json / get_client_info_json**: Structured-JSON helpers powering the workspace dropdown
+
+The workspace lets you create/switch/delete datasets, upload files, add text, search, and view the graph from one inline panel.
+
+The bundle that powers the workspace lives at `xinggraph-mcp/src/app_bundles/visualize-graph.html`. It is built from `xinggraph-mcp/apps-src/` via `npm run build` and is gitignored. The Docker image builds it as part of the image; PyPI wheels carry it (the maintainer runs `npm run build` before `uv build`); from-source users build it manually (see [Quick Start](#-quick-start) step 7). If the bundle is missing at runtime, the workspace tools raise a `FileNotFoundError` pointing back to the build command.
+
+### Agent Scoping (per-client default datasets)
+
+By default, each MCP client gets its own auto-named dataset (e.g. Cursor → `cursor_vscode_memory`, Claude Code → `claude_code_memory`) so different agents don't share memory unintentionally. The dataset is created on demand the first time a client calls a workspace tool.
+
+LLM-direct calls to `cognify`, `remember`, `improve`, `cognify_status`, and `cognify_file` route to the agent-scoped dataset when `dataset_name` is omitted. Pass `dataset_name` explicitly to override (e.g. `dataset_name="main_dataset"` still works).
+
+To disable agent scoping and have all clients share `main_dataset` as the default, set in `.env`:
+
+```bash
+XINGGRAPH_MCP_AGENT_SCOPED=false
+```
+
+When disabled, the workspace UI header shows `(agent scoping off)` and no per-client datasets are autocreated.
+
+### Per-dataset isolation (`ENABLE_BACKEND_ACCESS_CONTROL`)
+
+Agent scoping decides which dataset *name* a tool defaults to. Whether two datasets are actually isolated at the storage layer is governed by xinggraph's `ENABLE_BACKEND_ACCESS_CONTROL` flag:
+
+- **`true` (default)** — each `(user, dataset)` pair gets its own per-dataset Kuzu + LanceDB under `.xinggraph_system/databases/<dataset_uuid>/`. `visualize_graph_ui` and search become strictly per-dataset because the workspace passes `dataset_name` and the server routes the visualization through xinggraph's `visualize_multi_user_graph` to set the right DB context.
+- **`false`** — all datasets share one Kuzu graph DB and one LanceDB. The dataset filter is honored for top-level data points, but `GRAPH_COMPLETION` traversal can pull connected nodes from any dataset, and `visualize_graph_ui` reflects the full shared graph. Use for single-user local dev; also disables the API auth requirement unless `REQUIRE_AUTHENTICATION=true` is set explicitly.
+
+**Switching modes wipes nothing automatically — but data does not migrate.** Data ingested in one mode lives at a different on-disk path than the other and won't be visible after the flip. Clean-slate when changing the flag:
+
+```bash
+# Stop server, then:
+DATA_ROOT="/absolute/path/to/data-root"
+rm -rf "$DATA_ROOT/.xinggraph_system" "$DATA_ROOT/.data_storage"
+# Edit .env to flip ENABLE_BACKEND_ACCESS_CONTROL, restart, re-cognify.
+```
+
+(Set `DATA_ROOT` to whatever you used for `DATA_ROOT_DIRECTORY` / `SYSTEM_ROOT_DIRECTORY`, or your xinggraph install dir if you didn't set those.)
+
+**Examples:**
+```bash
+# Store permanent memory
+remember(data="XingGraph MCP now exposes a focused memory API.", dataset_name="main_dataset")
+
+# Store session memory
+remember(data="Temporary working note", session_id="agent-session-1")
+
+# Recall from memory
+recall(query="What changed in the MCP server?", session_id="agent-session-1")
+
+# Delete one dataset
+forget(dataset="main_dataset")
+```
+
+
+## Development and Debugging
+
+### Debugging
+
+To use debugger, run:
+    ```bash
+    mcp dev src/server.py
+    ```
+
+Open inspector with timeout passed:
+    ```
+    http://localhost:5173?timeout=120000
+    ```
+
+To apply new changes while developing xinggraph you need to do:
+
+1. Update dependencies in xinggraph folder if needed
+2. `uv sync --dev --all-extras --reinstall`
+3. `mcp dev src/server.py`
+
+### Development
+
+In order to use local xinggraph:
+
+1. Uncomment the following line in the xinggraph-mcp [`pyproject.toml`](pyproject.toml) file and set the xinggraph root path.
+    ```
+    #"xinggraph[postgres,codegraph,gemini,huggingface,docs,neo4j] @ file:/Users/<username>/Desktop/xinggraph"
+    ```
+    Remember to replace `file:/Users/<username>/Desktop/xinggraph` with your actual xinggraph root path.
+
+2. Install dependencies with uv in the mcp folder
+    ```
+    uv sync --reinstall
+    ```
+
+## Code of Conduct
+
+We are committed to making open source an enjoyable and respectful experience for our community. See <a href="https://github.com/xing-kj/xinggraph/blob/main/CODE_OF_CONDUCT.md"><code>CODE_OF_CONDUCT</code></a> for more information.
+
+## 💫 Contributors
+
+<a href="https://github.com/xing-kj/xinggraph/graphs/contributors">
+  <img alt="contributors" src="https://contrib.rocks/image?repo=xing-kj/xinggraph"/>
+</a>
+
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=xing-kj/xinggraph&type=Date)](https://star-history.com/#xing-kj/xinggraph&Date)

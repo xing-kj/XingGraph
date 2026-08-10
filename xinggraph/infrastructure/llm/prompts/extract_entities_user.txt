@@ -1,0 +1,4 @@
+Extract key entities from this text. Pay attention to product model/SKU codes and
+tag them as PRODUCT_MODEL entities:
+
+{{ text }}

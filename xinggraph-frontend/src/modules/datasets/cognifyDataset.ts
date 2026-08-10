@@ -1,0 +1,82 @@
+// import getDatasetGraph from "./getDatasetGraph";
+import { Dataset } from "../ingestion/useDatasets";
+import { XingGraphInstance } from "../instances/types";
+import { getPipelineSettingsFromStorage } from "../configuration/pipelineSettings";
+
+// interface GraphData {
+//   nodes: { id: string; label: string; properties?: object }[];
+//   edges: { source: string; target: string; label: string }[];
+// }
+
+interface CognifyOptions {
+  graphModel?: object;
+  customPrompt?: string;
+  ontologyKey?: string[];
+  llmModel?: string;
+  chunkSize?: number;
+  chunksPerBatch?: number;
+  chunker?: string;
+}
+
+export default async function cognifyDataset(
+  dataset: Dataset,
+  instance: XingGraphInstance,
+  options?: CognifyOptions,
+) {
+  const pipelineSettings = getPipelineSettingsFromStorage();
+  // const data = await (
+  return instance.fetch("/v1/cognify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      datasets: [dataset.name],
+      datasetIds: [dataset.id],
+      runInBackground: true,
+      ...(options?.graphModel ? { graphModel: options.graphModel } : {}),
+      customPrompt: options?.customPrompt ?? "",
+      ontologyKey: options?.ontologyKey ?? [],
+      chunksPerBatch: options?.chunksPerBatch ?? pipelineSettings.chunksPerBatch,
+      chunkSize: options?.chunkSize ?? pipelineSettings.chunkSize,
+      chunker: options?.chunker ?? null,
+      ...(options?.llmModel && { llmModel: options.llmModel }),
+    }),
+  })
+  .then((response) => response.json());
+  // .then(() => {
+  //   return getDatasetGraph(dataset, instance)
+  //     .then((data) => {
+  //       onUpdate({
+  //         nodes: data.nodes,
+  //         edges: data.edges,
+  //       });
+  //     });
+  // });
+  // )
+
+    // const websocket = new WebSocket(`ws://localhost:8000/api/v1/cognify/subscribe/${data.pipeline_run_id}`);
+
+    // let isCognifyDone = false;
+
+    // websocket.onmessage = (event) => {
+    //   const data = JSON.parse(event.data);
+    //   onUpdate?.({
+    //     nodes: data.payload.nodes,
+    //     edges: data.payload.edges,
+    //   });
+
+    //   if (data.status === "PipelineRunCompleted") {
+    //     isCognifyDone = true;
+    //     websocket.close();
+    //   }
+    // };
+
+    // return new Promise(async (resolve) => {
+    //   while (!isCognifyDone) {
+    //     await new Promise(resolve => setTimeout(resolve, 1000));
+    //   }
+
+    //   resolve(true);
+    // });
+}

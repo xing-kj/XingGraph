@@ -1,0 +1,153 @@
+name: Reusable Vector DB Tests
+
+on:
+  workflow_call:
+    inputs:
+      databases:
+        required: false
+        type: string
+        default: "all"
+        description: "Which vector databases to test (comma-separated list or 'all')"
+      ci-image:
+        required: false
+        type: string
+        default: ''
+    secrets:
+
+      POSTGRES_PASSWORD:
+        required: false
+
+env:
+  XINGGRAPH_SKIP_CONNECTION_TEST: 'true'
+
+jobs:
+  run-postgres-tests:
+    name: PostgreSQL Tests
+    runs-on: ubuntu-22.04
+    container: ${{ inputs.ci-image != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', inputs.ci-image, github.actor, github.token)) || null }}
+    if: ${{ inputs.databases == 'all' || contains(inputs.databases, 'postgres') }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: xinggraph
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: xinggraph_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: XingGraph Setup
+        uses: ./.github/actions/xinggraph_setup
+        with:
+          python-version: ${{ inputs.python-version }}
+          extra-dependencies: "postgres"
+
+      - name: Run PGVector Tests
+        env:
+          ENV: 'dev'
+          ENABLE_BACKEND_ACCESS_CONTROL: 'false'
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_ENDPOINT: ${{ secrets.LLM_ENDPOINT }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_ARGS: ${{ secrets.LLM_ARGS }}
+          LLM_API_VERSION: ${{ secrets.LLM_API_VERSION }}
+          EMBEDDING_DIMENSIONS: 300
+          EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          DB_HOST: ${{ inputs.ci-image != '' && 'postgres' || '127.0.0.1' }}
+        run: uv run python ./xinggraph/tests/test_pgvector.py
+
+  run-pgvector-multi-user-tests:
+    name: PGVector Multi-User Tests
+    runs-on: ubuntu-22.04
+    container: ${{ inputs.ci-image != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', inputs.ci-image, github.actor, github.token)) || null }}
+    if: ${{ inputs.databases == 'all' || contains(inputs.databases, 'postgres') }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          POSTGRES_USER: xinggraph
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: xinggraph_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: XingGraph Setup
+        uses: ./.github/actions/xinggraph_setup
+        with:
+          python-version: ${{ inputs.python-version }}
+          extra-dependencies: "postgres"
+
+      - name: Run PGVector Permissions Tests
+        env:
+          ENV: 'dev'
+          ENABLE_BACKEND_ACCESS_CONTROL: 'true'
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_ENDPOINT: ${{ secrets.LLM_ENDPOINT }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_ARGS: ${{ secrets.LLM_ARGS }}
+          LLM_API_VERSION: ${{ secrets.LLM_API_VERSION }}
+          EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          VECTOR_DB_HOST: ${{ inputs.ci-image != '' && 'postgres' || '127.0.0.1' }}
+          VECTOR_DB_PORT: 5432
+          VECTOR_DB_USERNAME: xinggraph
+          VECTOR_DB_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          VECTOR_DATASET_DATABASE_HANDLER: pgvector
+        run: uv run python ./xinggraph/tests/test_permissions.py
+
+  run-lancedb-tests:
+    name: LanceDB Tests
+    runs-on: ubuntu-22.04
+    container: ${{ inputs.ci-image != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', inputs.ci-image, github.actor, github.token)) || null }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: XingGraph Setup
+        uses: ./.github/actions/xinggraph_setup
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Run LanceDB Tests
+        env:
+          ENV: 'dev'
+          # Cap cached DB adapters
+          DATABASE_MAX_LRU_CACHE_SIZE: 1
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_ENDPOINT: ${{ secrets.LLM_ENDPOINT }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_ARGS: ${{ secrets.LLM_ARGS }}
+          LLM_API_VERSION: ${{ secrets.LLM_API_VERSION }}
+          EMBEDDING_DIMENSIONS: 300
+          EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+        run: uv run python ./xinggraph/tests/test_lancedb.py

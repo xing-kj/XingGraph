@@ -1,0 +1,376 @@
+import os
+import inspect
+from numbers import Number
+
+from .supported_databases import supported_databases
+from .embeddings import get_embedding_engine
+from xinggraph.infrastructure.databases.dataset_queue.pinning import dataset_queue_pin_predicate
+from xinggraph.infrastructure.databases.utils.closing_lru_cache import closing_lru_cache
+from xinggraph.shared.lru_cache import DATABASE_MAX_LRU_CACHE_SIZE
+from xinggraph.shared.logging_utils import get_logger
+
+logger = get_logger("VectorEngine")
+
+
+def _get_create_vector_engine_optional_defaults() -> dict:
+    """Return default values for optional create_vector_engine parameters."""
+    signature = inspect.signature(create_vector_engine)
+    return {
+        name: parameter.default
+        for name, parameter in signature.parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    }
+
+
+def _normalize_optional_create_vector_engine_params(params: dict) -> dict:
+    """
+    Normalize optional create_vector_engine parameters:
+    - replace None with the function defaults
+    - convert numeric vector_db_port values to string
+    """
+    defaults = _get_create_vector_engine_optional_defaults()
+    normalized = dict(params)
+
+    for key, default_value in defaults.items():
+        if normalized.get(key) is None:
+            normalized[key] = default_value
+
+    if isinstance(normalized.get("vector_db_port"), Number) and not isinstance(
+        normalized["vector_db_port"], bool
+    ):
+        normalized["vector_db_port"] = str(normalized["vector_db_port"])
+
+    if not normalized.get("vector_dataset_database_handler"):
+        # We use lancedb as the default, otherwise it is expected that the user defined VECTOR_DATASET_DATABASE_HANDLER
+        normalized["vector_dataset_database_handler"] = os.getenv(
+            "VECTOR_DATASET_DATABASE_HANDLER", "lancedb"
+        )
+
+    return normalized
+
+
+def create_vector_engine(
+    vector_db_provider: str,
+    vector_db_url: str,
+    vector_db_name: str,
+    vector_db_port: str = "",
+    vector_db_key: str = "",
+    vector_dataset_database_handler: str = "",
+    vector_db_username: str = "",
+    vector_db_password: str = "",
+    vector_db_host: str = "",
+    vector_db_subprocess_enabled: bool = True,
+):
+    """
+    Wrapper function to call create vector engine with caching.
+    For a detailed description, see _create_vector_engine.
+    """
+
+    normalized_optional_params = _normalize_optional_create_vector_engine_params(locals())
+    vector_db_port = normalized_optional_params["vector_db_port"]
+    vector_db_key = normalized_optional_params["vector_db_key"]
+    vector_dataset_database_handler = normalized_optional_params["vector_dataset_database_handler"]
+    vector_db_username = normalized_optional_params["vector_db_username"]
+    vector_db_password = normalized_optional_params["vector_db_password"]
+    vector_db_host = normalized_optional_params["vector_db_host"]
+    # ``vector_db_subprocess_enabled`` also went through normalization;
+    # reassign so callers passing ``None`` see the function-default applied
+    # instead of having ``None`` flow into the cache key + factory.
+    vector_db_subprocess_enabled = normalized_optional_params["vector_db_subprocess_enabled"]
+
+    # Check USE_UNIFIED_PROVIDER outside the cache so it's always re-read
+    # unified_provider = os.environ.get("USE_UNIFIED_PROVIDER", "")
+    # if unified_provider == "pghybrid":
+    #     from xinggraph.infrastructure.databases.relational import get_relational_config
+    #
+    #     embedding_engine = get_embedding_engine()
+    #     relational_config = get_relational_config()
+    #     connection_string = (
+    #         f"postgresql+asyncpg://{relational_config.db_username}:{relational_config.db_password}"
+    #         f"@{relational_config.db_host}:{relational_config.db_port}"
+    #         f"/{relational_config.db_name}"
+    #     )
+    #
+    #     from .pgvector.PGVectorAdapter import PGVectorAdapter
+    #
+    #     return PGVectorAdapter(
+    #         connection_string,
+    #         vector_db_key,
+    #         embedding_engine,
+    #     )
+
+    return _create_vector_engine(
+        vector_db_provider,
+        vector_db_url,
+        vector_db_name,
+        vector_db_port,
+        vector_db_key,
+        vector_dataset_database_handler,
+        vector_db_username,
+        vector_db_password,
+        vector_db_host,
+        vector_db_subprocess_enabled,
+    )
+
+
+def evict_vector_engine(**kwargs) -> bool:
+    """Evict a cached vector engine entry created via ``create_vector_engine``.
+
+    Mirrors ``create_vector_engine``'s normalization so the cache key
+    matches. Returns True if the entry existed.
+    """
+    normalized = _normalize_optional_create_vector_engine_params(kwargs)
+    return _create_vector_engine.cache_evict(
+        kwargs.get("vector_db_provider", ""),
+        kwargs.get("vector_db_url", ""),
+        kwargs.get("vector_db_name", ""),
+        normalized["vector_db_port"],
+        normalized["vector_db_key"],
+        normalized["vector_dataset_database_handler"],
+        normalized["vector_db_username"],
+        normalized["vector_db_password"],
+        normalized["vector_db_host"],
+        normalized["vector_db_subprocess_enabled"],
+    )
+
+
+def evict_vector_engines_for_database(vector_db_name: str) -> int:
+    """Evict every cached vector engine bound to *vector_db_name*.
+
+    The same per-dataset database can be cached under multiple keys: the
+    dataset-handler paths and the pipeline's context-config path build their
+    engines with different kwargs (e.g. ``vector_dataset_database_handler``),
+    so key-exact ``evict_vector_engine`` misses entries and leaves an engine
+    with a dead connection pool and stale collection metadata. Per-dataset
+    database names are dataset UUIDs, so matching the name against key fields
+    cannot collide with other entries.
+
+    Returns the number of evicted entries.
+    """
+    if not vector_db_name:
+        raise ValueError("vector_db_name must be a non-empty database name")
+    return _create_vector_engine.cache_evict_matching(vector_db_name=vector_db_name)
+
+
+async def aevict_vector_engines_for_database(vector_db_name: str) -> int:
+    """Evict every cached vector engine bound to *vector_db_name* and wait
+    until their IN-FLIGHT closes have completed. Use before removing the
+    database's files so a teardown that is already running cannot race the
+    removal.
+
+    A close still deferred behind a live caller proxy (an idle engine handle)
+    is NOT waited on — see the ``closing_lru_cache`` module docstring. In that
+    case files are removed under an engine that closes later; on POSIX the
+    unlinked files stay valid for the holder and the eventual close writes to
+    nowhere, which is acceptable for a dataset being deleted.
+
+    Returns the number of evicted entries.
+    """
+    evicted = evict_vector_engines_for_database(vector_db_name)
+    await _create_vector_engine.cache_await_closed(vector_db_name=vector_db_name)
+    return evicted
+
+
+def is_vector_engine_cached(**kwargs) -> bool:
+    """Check whether a vector engine entry exists in the cache without creating."""
+    normalized = _normalize_optional_create_vector_engine_params(kwargs)
+    return _create_vector_engine.cache_contains(
+        kwargs.get("vector_db_provider", ""),
+        kwargs.get("vector_db_url", ""),
+        kwargs.get("vector_db_name", ""),
+        normalized["vector_db_port"],
+        normalized["vector_db_key"],
+        normalized["vector_dataset_database_handler"],
+        normalized["vector_db_username"],
+        normalized["vector_db_password"],
+        normalized["vector_db_host"],
+        normalized["vector_db_subprocess_enabled"],
+    )
+
+
+@closing_lru_cache(
+    maxsize=DATABASE_MAX_LRU_CACHE_SIZE,
+    pinned_predicate=dataset_queue_pin_predicate("vector_db_name"),
+)
+def _create_vector_engine(
+    vector_db_provider: str,
+    vector_db_url: str,
+    vector_db_name: str,
+    vector_db_port: str,
+    vector_db_key: str,
+    vector_dataset_database_handler: str,
+    vector_db_username: str,
+    vector_db_password: str,
+    vector_db_host: str,
+    vector_db_subprocess_enabled: bool,
+):
+    """
+    Create a vector database engine based on the specified provider.
+
+    This function initializes and returns a database adapter for vector storage, depending
+    on the provided vector database provider. The function checks for required credentials
+    for each provider, raising an EnvironmentError if any are missing, or ImportError if the
+    provider's package is not installed.
+
+    Built-in providers include: pgvector, LanceDB, and neptune_analytics. Additional
+    providers (e.g. ChromaDB, Qdrant, Weaviate, Milvus) are available as community
+    adapters that register themselves via ``use_vector_adapter`` — see
+    https://github.com/xing-kj/xinggraph-community.
+
+    Parameters:
+    -----------
+
+        - vector_db_url (str): The URL for the vector database instance.
+        - vector_db_port (str): The port for the vector database instance. Required for some
+          providers.
+        - vector_db_name (str): The name of the vector database instance.
+        - vector_db_key (str): The API key or access token for the vector database instance.
+        - vector_db_provider (str): The name of the vector database provider to use (e.g.,
+          'pgvector').
+
+    Returns:
+    --------
+
+        An instance of the corresponding database adapter class for the specified provider.
+    """
+    embedding_engine = get_embedding_engine()
+
+    if vector_db_provider in supported_databases:
+        adapter = supported_databases[vector_db_provider]
+
+        return adapter(
+            url=vector_db_url,
+            api_key=vector_db_key,
+            embedding_engine=embedding_engine,
+            database_name=vector_db_name,
+        )
+
+    if vector_db_provider.lower() == "pgvector":
+        from xinggraph.context_global_variables import backend_access_control_enabled
+
+        if backend_access_control_enabled():
+            if not (
+                vector_db_host and vector_db_port and vector_db_username and vector_db_password
+            ):
+                raise EnvironmentError("Missing required pgvector credentials.")
+
+            connection_string: str = (
+                f"postgresql+asyncpg://{vector_db_username}:{vector_db_password}"
+                f"@{vector_db_host}:{vector_db_port}/{vector_db_name}"
+            )
+        else:
+            if (
+                vector_db_port
+                and vector_db_username
+                and vector_db_password
+                and vector_db_host
+                and vector_db_name
+            ):
+                connection_string: str = (
+                    f"postgresql+asyncpg://{vector_db_username}:{vector_db_password}"
+                    f"@{vector_db_host}:{vector_db_port}/{vector_db_name}"
+                )
+            else:
+                from xinggraph.infrastructure.databases.relational import get_relational_config
+
+                logger.warning(
+                    "PGVector credentials are not fully configured; "
+                    "falling back to the relational database configuration. "
+                    "Set VECTOR_DB_HOST/PORT/USERNAME/PASSWORD/NAME explicitly "
+                    "to avoid this fallback."
+                )
+
+                # Get configuration for postgres database
+                relational_config = get_relational_config()
+                db_username = relational_config.db_username
+                db_password = relational_config.db_password
+                db_host = relational_config.db_host
+                db_port = relational_config.db_port
+                db_name = relational_config.db_name
+
+                if not (db_host and db_port and db_name and db_username and db_password):
+                    raise EnvironmentError("Missing required pgvector credentials!")
+
+                connection_string: str = (
+                    f"postgresql+asyncpg://{db_username}:{db_password}"
+                    f"@{db_host}:{db_port}/{db_name}"
+                )
+
+        try:
+            from .pgvector.PGVectorAdapter import PGVectorAdapter
+        except ImportError:
+            raise ImportError(
+                "PostgreSQL dependencies are not installed. Please install with 'pip install xinggraph\"[postgres]\"' or 'pip install xinggraph\"[postgres-binary]\"' to use PGVector functionality."
+            )
+
+        return PGVectorAdapter(
+            connection_string,
+            vector_db_key,
+            embedding_engine,
+        )
+
+    elif vector_db_provider.lower() == "neptune_analytics":
+        try:
+            from langchain_aws import NeptuneAnalyticsGraph
+        except ImportError:
+            raise ImportError(
+                "langchain_aws is not installed. Please install it with 'pip install langchain_aws'"
+            )
+
+        if not vector_db_url:
+            raise EnvironmentError("Missing Neptune endpoint.")
+
+        from xinggraph.infrastructure.databases.hybrid.neptune_analytics.NeptuneAnalyticsAdapter import (
+            NeptuneAnalyticsAdapter,
+            NEPTUNE_ANALYTICS_ENDPOINT_URL,
+        )
+
+        if not vector_db_url.startswith(NEPTUNE_ANALYTICS_ENDPOINT_URL):
+            raise ValueError(
+                f"Neptune endpoint must have the format '{NEPTUNE_ANALYTICS_ENDPOINT_URL}<GRAPH_ID>'"
+            )
+
+        graph_identifier = vector_db_url.replace(NEPTUNE_ANALYTICS_ENDPOINT_URL, "")
+
+        return NeptuneAnalyticsAdapter(
+            graph_id=graph_identifier,
+            embedding_engine=embedding_engine,
+        )
+
+    elif vector_db_provider.lower() == "lancedb":
+        from .lancedb.LanceDBAdapter import LanceDBAdapter
+
+        if vector_db_subprocess_enabled:
+            return LanceDBAdapter.create_subprocess(
+                url=vector_db_url,
+                api_key=vector_db_key,
+                embedding_engine=embedding_engine,
+            )
+
+        return LanceDBAdapter(
+            url=vector_db_url,
+            api_key=vector_db_key,
+            embedding_engine=embedding_engine,
+        )
+
+    elif vector_db_provider.lower() == "qdrant":
+        try:
+            from .qdrant.QdrantAdapter import QdrantAdapter
+        except ImportError:
+            raise ImportError(
+                "Qdrant dependencies are not installed. Please install with "
+                "'pip install qdrant-client' to use Qdrant functionality."
+            ) from None
+
+        return QdrantAdapter(
+            url=vector_db_url,
+            api_key=vector_db_key,
+            embedding_engine=embedding_engine,
+            database_name=vector_db_name,
+        )
+
+    else:
+        raise EnvironmentError(
+            f"Unsupported vector database provider: {vector_db_provider}. "
+            f"Supported providers are: {', '.join(list(supported_databases.keys()) + ['LanceDB', 'PGVector', 'neptune_analytics', 'qdrant'])}"
+        )

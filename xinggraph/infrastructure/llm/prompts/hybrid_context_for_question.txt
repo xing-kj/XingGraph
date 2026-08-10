@@ -1,0 +1,12 @@
+The question is: `{{ question }}`
+
+CRITICAL INSTRUCTIONS:
+1. The context below is divided into sections using "====...====" separators.
+2. Each section header "ENTITY N: <name>" contains information ONLY about that specific entity.
+3. When answering about a specific entity, ONLY use information from that entity's section. Do NOT mix information from different entities.
+4. If an entity's section does not contain enough information to answer, explicitly state "Information insufficient for <entity name>" — do NOT infer or hallucinate details from other entities' sections.
+5. For comparison questions, compare each entity strictly based on its own section data.
+6. The "GENERAL CONTEXT" section contains shared information not bound to any specific entity. Use it only when relevant to all entities.
+
+Context:
+`{{ context }}`

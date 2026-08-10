@@ -1,0 +1,47 @@
+from xinggraph.modules.engine.models import Entity, EntityType
+from xinggraph.modules.engine.utils import generate_node_name
+from xinggraph.shared.data_models import KnowledgeGraph
+
+
+def extract_entities(graph: KnowledgeGraph, cache: dict | None = None):
+    if cache is None:
+        cache = {}
+    entities = []
+    entity_types = []
+
+    for node in graph.nodes:
+        node_id = Entity.id_for(node.id)
+
+        if node_id not in cache:
+            entity = Entity(
+                id=node_id,
+                name=generate_node_name(node.id),
+                type=node.type,
+                description=node.description,
+                ontology_valid=False,
+            )
+            cache[node_id] = entity
+        else:
+            entity = cache[node_id]
+
+        entities.append(entity)
+
+        node_type = node.type
+        type_node_id = EntityType.id_for(node_type)
+        if type_node_id not in cache:
+            type_node_name = generate_node_name(node_type)
+
+            type_node = EntityType(
+                id=type_node_id,
+                name=type_node_name,
+                type=type_node_name,
+                description=type_node_name,
+                ontology_valid=False,
+            )
+            cache[type_node_id] = type_node
+        else:
+            type_node = cache[type_node_id]
+
+        entity_types.append(type_node)
+
+    return entities + entity_types

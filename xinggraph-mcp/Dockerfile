@@ -1,0 +1,104 @@
+# Build the MCP App workspace bundle (React/Vite, served inline by the MCP
+# server). Vite writes to ../src/app_bundles/ relative to apps-src, so we
+# mirror the repo layout: /build/xinggraph-mcp/{apps-src,src}.
+FROM node:22-alpine AS app-bundle
+WORKDIR /build/xinggraph-mcp/apps-src
+COPY ./xinggraph-mcp/apps-src/package.json ./xinggraph-mcp/apps-src/package-lock.json ./
+RUN npm ci
+COPY ./xinggraph-mcp/apps-src ./
+RUN npm run build
+# Output lands at /build/xinggraph-mcp/src/app_bundles/visualize-graph.html
+
+# Use a Python image with uv pre-installed
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS uv
+
+# Install the project into `/app`
+WORKDIR /app
+
+# Enable bytecode compilation
+# ENV UV_COMPILE_BYTECODE=1
+
+# Copy from the cache instead of linking since it's a mounted volume
+ENV UV_LINK_MODE=copy
+
+# Set build argument
+ARG DEBUG
+
+# Set environment variable based on the build argument
+ENV DEBUG=${DEBUG}
+
+# Needed when psycopg2 is built from source via xinggraph[postgres] in linux images.
+# libpq-dev provides pg_config; build-essential provides libc headers and toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pyproject.toml and lockfile first for better caching
+COPY ./xinggraph-mcp/pyproject.toml ./xinggraph-mcp/uv.lock ./xinggraph-mcp/entrypoint.sh ./
+
+# Install the project's dependencies using the lockfile and settings
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev --no-editable
+
+# Then, add the rest of the project source code and install it
+# Installing separately from its dependencies allows layer caching
+COPY ./xinggraph-mcp /app
+# Drop in the workspace bundle built by the node stage. Order matters: the
+# COPY above brings in `xinggraph-mcp/src/app_bundles/` (empty in CI/clean clones
+# because the bundle is gitignored, or stale on a developer's machine), and
+# this COPY then *shadows* it with the freshly-built bundle. uv sync below
+# packages this into the wheel installed into the venv; visualize_graph_ui
+# reads the bundle from its own neighbor directory inside site-packages.
+COPY --from=app-bundle /build/xinggraph-mcp/src/app_bundles /app/src/app_bundles
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
+
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the virtual environment from the uv stage
+COPY --from=uv /usr/local /usr/local
+COPY --from=uv /app /app
+
+# Strip Windows carriage returns (fixes "no such file" on Windows Docker)
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
+# Run as a non-root user. Create the user before copying ownership so the
+# /app tree (which already exists from the COPY above) is readable.
+RUN groupadd --system --gid 1000 xinggraph \
+    && useradd --system --uid 1000 --gid xinggraph --no-create-home --shell /usr/sbin/nologin xinggraph \
+    && chown -R xinggraph:xinggraph /app
+
+# Place executables in the environment at the front of the path
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Set environment variables for MCP server
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+# Give the non-root user a stable, writable HOME so Kuzu/Ladybug caches its
+# downloaded extensions in a consistent location across build and runtime.
+ENV HOME=/app
+
+# Add labels for API mode usage
+LABEL org.opencontainers.image.description="XingGraph MCP Server with API mode support"
+
+USER xinggraph
+
+# Pre-install Kuzu/Ladybug's JSON extension at build time (network is available
+# here) so it is baked into the image. Runs the same install path the app uses,
+# as the same user with the same HOME, so the cached extension lands exactly
+# where the running server looks for it — avoiding the "Extension: json ... has
+# not been installed" Binder error when recall runs in a network-restricted
+# container. Best-effort: a failed download must not break the image build.
+RUN python -c "from xinggraph_db_workers._kuzu_helpers import install_json_extension_local; install_json_extension_local(buffer_pool_size=268435456)" \
+    || echo "WARNING: JSON extension pre-install skipped (no network at build time); it will be installed on first run if the container has network access."
+
+# Use the application name from pyproject.toml for normal operation
+# For testing, we'll override this with a direct command
+ENTRYPOINT ["/app/entrypoint.sh"]

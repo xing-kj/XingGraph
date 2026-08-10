@@ -1,0 +1,130 @@
+import os
+import shutil
+import xinggraph
+import pathlib
+from xinggraph.infrastructure.files.storage import get_storage_config
+from xinggraph.shared.logging_utils import get_logger
+from xinggraph.modules.search.types import SearchType
+from xinggraph.modules.search.operations import get_history
+from xinggraph.modules.users.methods import get_default_user
+
+logger = get_logger()
+
+
+async def main():
+    # Clean up test directories before starting
+    data_directory_path = str(
+        pathlib.Path(
+            os.path.join(pathlib.Path(__file__).parent, ".data_storage/test_remote_ladybug")
+        ).resolve()
+    )
+    xinggraph_directory_path = str(
+        pathlib.Path(
+            os.path.join(pathlib.Path(__file__).parent, ".xinggraph_system/test_remote_ladybug")
+        ).resolve()
+    )
+
+    try:
+        # Set remote Ladybug as the graph database provider
+        xinggraph.config.set_graph_database_provider("ladybug-remote")
+        xinggraph.config.data_root_directory(data_directory_path)
+        xinggraph.config.system_root_directory(xinggraph_directory_path)
+
+        # Configure remote Ladybug database using environment variables
+        host = os.getenv("LADYBUG_HOST", "localhost")
+        port = os.getenv("LADYBUG_PORT", "8000")
+        graph_database_url = os.getenv("GRAPH_DATABASE_URL", f"http://{host}:{port}")
+        graph_database_username = os.getenv(
+            "GRAPH_DATABASE_USERNAME", os.getenv("LADYBUG_USERNAME", "ladybug")
+        )
+        graph_database_password = os.getenv(
+            "GRAPH_DATABASE_PASSWORD", os.getenv("LADYBUG_PASSWORD", "ladybug")
+        )
+        os.environ["GRAPH_DATABASE_URL"] = graph_database_url
+        os.environ["GRAPH_DATABASE_USERNAME"] = graph_database_username
+        os.environ["GRAPH_DATABASE_PASSWORD"] = graph_database_password
+
+        from xinggraph.infrastructure.databases.graph.config import get_graph_config
+
+        graph_config = get_graph_config()
+        graph_config.graph_database_provider = "ladybug-remote"
+        graph_config.graph_database_url = graph_database_url
+        graph_config.graph_database_username = graph_database_username
+        graph_config.graph_database_password = graph_database_password
+
+        await xinggraph.prune.prune_data()
+        await xinggraph.prune.prune_system(metadata=True)
+
+        dataset_name = "cs_explanations"
+
+        explanation_file_path_nlp = os.path.join(
+            pathlib.Path(__file__).parent, "test_data/Natural_language_processing.txt"
+        )
+        await xinggraph.add([explanation_file_path_nlp], dataset_name)
+
+        explanation_file_path_quantum = os.path.join(
+            pathlib.Path(__file__).parent, "test_data/Quantum_computers.txt"
+        )
+
+        await xinggraph.add([explanation_file_path_quantum], dataset_name)
+
+        await xinggraph.cognify([dataset_name])
+
+        from xinggraph.infrastructure.databases.vector import get_vector_engine_async
+
+        vector_engine = await get_vector_engine_async()
+        random_node = (
+            await vector_engine.search("Entity_name", "Quantum computer", include_payload=True)
+        )[0]
+        random_node_name = random_node.payload["text"]
+
+        search_results = await xinggraph.search(
+            query_type=SearchType.GRAPH_COMPLETION, query_text=random_node_name
+        )
+        assert len(search_results) != 0, "The search results list is empty."
+        print("\n\nExtracted sentences are:\n")
+        for result in search_results:
+            print(f"{result}\n")
+
+        search_results = await xinggraph.search(
+            query_type=SearchType.CHUNKS, query_text=random_node_name
+        )
+        assert len(search_results) != 0, "The search results list is empty."
+        print("\n\nExtracted chunks are:\n")
+        for result in search_results:
+            print(f"{result}\n")
+
+        search_results = await xinggraph.search(
+            query_type=SearchType.SUMMARIES, query_text=random_node_name
+        )
+        assert len(search_results) != 0, "Query related summaries don't exist."
+        print("\nExtracted summaries are:\n")
+        for result in search_results:
+            print(f"{result}\n")
+
+        user = await get_default_user()
+        history = await get_history(user.id)
+        assert len(history) == 6, "Search history is not correct."
+
+        await xinggraph.prune.prune_data()
+        data_root_directory = get_storage_config()["data_root_directory"]
+        assert not os.path.isdir(data_root_directory), "Local data files are not deleted"
+
+        await xinggraph.prune.prune_system(metadata=True)
+        from xinggraph.infrastructure.databases.graph import get_graph_engine
+
+        graph_engine = await get_graph_engine()
+        nodes, edges = await graph_engine.get_graph_data()
+        assert len(nodes) == 0 and len(edges) == 0, "Remote Ladybug graph database is not empty"
+
+    finally:
+        # Ensure cleanup even if tests fail
+        for path in [data_directory_path, xinggraph_directory_path]:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())

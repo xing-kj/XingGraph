@@ -1,0 +1,28 @@
+name: Reusable Notebook Tests
+
+on:
+  workflow_call:
+    inputs:
+      ci-image:
+        required: false
+        type: string
+        default: ''
+
+env:
+  XINGGRAPH_SKIP_CONNECTION_TEST: 'true'
+
+jobs:
+#  run-main-notebook:
+#    name: Main Notebook Test
+#    uses: ./.github/workflows/reusable_notebook.yml
+#    with:
+#      notebook-location: notebooks/xinggraph_demo.ipynb
+#    secrets: inherit
+
+  run-xinggraph-multimedia:
+    name: XingGraph Multimedia Notebook
+    uses: ./.github/workflows/reusable_notebook.yml
+    with:
+      notebook-location: notebooks/xinggraph_multimedia_demo.ipynb
+      ci-image: ${{ inputs.ci-image }}
+    secrets: inherit

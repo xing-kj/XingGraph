@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-xinggraph
+  labels:
+    app: {{ .Release.Name }}-xinggraph
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.xinggraph.port }}
+      targetPort: {{ .Values.xinggraph.port }}
+  selector:
+    app: {{ .Release.Name }}-xinggraph

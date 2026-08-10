@@ -1,0 +1,55 @@
+name: install_xinggraph
+description: "Installs XingGraph from local source or PyPI depending on specified version"
+
+inputs:
+  python-version:
+    description: "Which Python version to use"
+    required: false
+    default: "3.11.x"
+  xinggraph_version:
+    description: "Pypi-compatible version of xinggraph to use. For example, 0.5.2.dev0. `local` (default) - Installing XingGraph from local source"
+    required: false
+    default: "local"
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Detect CI container
+      id: detect-env
+      shell: bash
+      run: |
+        if [ -f "/app/.anon_id" ] && command -v uv &> /dev/null && [ -d "/app/.venv" ]; then
+          echo "in-container=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "in-container=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Python
+      if: steps.detect-env.outputs.in-container != 'true'
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      if: steps.detect-env.outputs.in-container != 'true'
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+
+    - name: (Re)Install XingGraph
+      shell: bash
+      working-directory: xinggraph-mcp
+      env:
+        VIRTUAL_ENV: ${{ steps.detect-env.outputs.in-container == 'true' && '/app/.venv' || '' }}
+      run: |
+        uv pip uninstall xinggraph
+        if [ "${{ inputs.xinggraph_version }}" = "local" ]; then
+          echo "Installing XingGraph from local source ..."
+          uv pip install --force-reinstall -e ../
+        else
+          echo "Installing XingGraph version ${{ inputs.xinggraph_version }} from PyPI..."
+          uv pip install --force-reinstall "xinggraph==${{ inputs.xinggraph_version }}"
+        fi
+        echo "Installed XingGraph version:"
+        uv pip show xinggraph | grep Version

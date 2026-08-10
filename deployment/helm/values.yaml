@@ -1,0 +1,23 @@
+# Configuration for the 'xinggraph' application service
+xinggraph:
+  # Image name (using the local image we’ll build in Minikube)
+  image: "xinggraph/xinggraph:main"
+  port: 8000
+  env:
+    ENV: "local"
+    PYTHONPATH: "."
+    LLM_MODEL: "openai/gpt-4o-mini"
+    LLM_PROVIDER: "openai"
+  resources:
+    cpu: "4.0"
+    memory: "2Gi"
+
+# Configuration for the 'postgres' database service
+postgres:
+  image: "pgvector/pgvector:pg17"
+  port: 5432
+  env:
+    POSTGRES_USER: "xinggraph"
+    POSTGRES_PASSWORD: "xinggraph"
+    POSTGRES_DB: "xinggraph_db"
+  storage: "2Gi"

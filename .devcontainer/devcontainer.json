@@ -1,0 +1,29 @@
+{
+  "name": "XingGraph Development",
+  "image": "ghcr.io/astral-sh/uv:python3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "uv sync && cp xinggraph/.env.template xinggraph/.env && echo 'Set LLM_API_KEY in xinggraph/.env to get started'",
+  "forwardPorts": [8000, 3000],
+  "portsAttributes": {
+    "8000": {"label": "XingGraph API", "onAutoForward": "notify"},
+    "3000": {"label": "XingGraph UI", "onAutoForward": "notify"}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python"
+      }
+    }
+  },
+  "remoteEnv": {
+    "PYTHONPATH": "/workspaces/xinggraph"
+  }
+}

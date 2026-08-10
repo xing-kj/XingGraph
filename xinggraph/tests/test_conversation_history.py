@@ -1,0 +1,443 @@
+"""
+End-to-end integration test for conversation history feature.
+
+Covers retrievers that save conversation history (via SessionManager / cache):
+  GRAPH_COMPLETION, GRAPH_COMPLETION_DECOMPOSITION, RAG_COMPLETION, GRAPH_COMPLETION_COT,
+  GRAPH_COMPLETION_CONTEXT_EXTENSION, GRAPH_SUMMARY_COMPLETION, TEMPORAL, TRIPLET_COMPLETION.
+Uses cache_engine.get_latest_qa for legacy assertions and xinggraph.session.get_session for
+session history; e2e for session SDK (get_session, add_feedback, delete_feedback) at end.
+"""
+
+import os
+import pathlib
+from collections import Counter
+
+import xinggraph
+from xinggraph.infrastructure.databases.cache import SessionQAEntry, get_cache_engine
+from xinggraph.infrastructure.databases.graph import get_graph_engine
+from xinggraph.modules.search.types import SearchType
+from xinggraph.modules.users.methods import get_default_user
+from xinggraph.shared.logging_utils import get_logger
+
+logger = get_logger()
+
+
+def _assert_used_graph_element_ids_shape(entry: SessionQAEntry, expect_none: bool = False) -> None:
+    """Assert entry has used_graph_element_ids key and valid shape (or None for Triplet)."""
+    ids = entry.used_graph_element_ids
+    if expect_none:
+        assert ids is None, "Triplet retriever should store used_graph_element_ids as None"
+        return
+    if ids is None:
+        return
+    assert isinstance(ids, dict), "used_graph_element_ids must be dict or None"
+    assert set(ids.keys()) <= {"node_ids", "edge_ids"}, (
+        "used_graph_element_ids may only have node_ids and edge_ids"
+    )
+    for key in ("node_ids", "edge_ids"):
+        if key in ids:
+            assert isinstance(ids[key], list), f"{key} must be a list"
+            assert all(isinstance(x, str) for x in ids[key]), f"{key} must be list of str"
+
+
+async def main():
+    ######BEGIN: OLD SESSION FUNCTIONALITY (to be updated/removed in COG-3881; prefer pytest) ######
+    data_directory_path = str(
+        pathlib.Path(
+            os.path.join(
+                pathlib.Path(__file__).parent,
+                ".data_storage/test_conversation_history",
+            )
+        ).resolve()
+    )
+    xinggraph_directory_path = str(
+        pathlib.Path(
+            os.path.join(
+                pathlib.Path(__file__).parent,
+                ".xinggraph_system/test_conversation_history",
+            )
+        ).resolve()
+    )
+
+    xinggraph.config.data_root_directory(data_directory_path)
+    xinggraph.config.system_root_directory(xinggraph_directory_path)
+
+    await xinggraph.prune.prune_data()
+    await xinggraph.prune.prune_system(metadata=True)
+
+    dataset_name = "conversation_history_test"
+
+    text_1 = """TechCorp is a technology company based in San Francisco. They specialize in artificial intelligence and machine learning."""
+    text_2 = (
+        """DataCo is a data analytics company. They help businesses make sense of their data."""
+    )
+
+    await xinggraph.add(data=text_1, dataset_name=dataset_name)
+    await xinggraph.add(data=text_2, dataset_name=dataset_name)
+
+    await xinggraph.cognify(datasets=[dataset_name])
+
+    user = await get_default_user()
+
+    from xinggraph.memify_pipelines.create_triplet_embeddings import create_triplet_embeddings
+
+    await create_triplet_embeddings(user=user, dataset=dataset_name)
+
+    cache_engine = get_cache_engine()
+    assert cache_engine is not None, "Cache engine should be available for testing"
+
+    session_id_1 = "test_session_graph"
+
+    await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="What is TechCorp?",
+        session_id=session_id_1,
+    )
+
+    history1 = await cache_engine.get_latest_qa(str(user.id), session_id_1, last_n=10)
+    assert len(history1) == 1, f"Expected at least 1 Q&A in history, got {len(history1)}"
+    our_qa = [h for h in history1 if h.question == "What is TechCorp?"]
+    assert len(our_qa) >= 1, "Expected to find 'What is TechCorp?' in history"
+    _assert_used_graph_element_ids_shape(our_qa[0])
+
+    result2 = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="Tell me more about it",
+        session_id=session_id_1,
+    )
+
+    assert isinstance(result2, list) and len(result2) > 0, (
+        f"Second query should return non-empty list, got: {result2!r}"
+    )
+
+    history2 = await cache_engine.get_latest_qa(str(user.id), session_id_1, last_n=10)
+    our_questions = [
+        h for h in history2 if h.question in ["What is TechCorp?", "Tell me more about it"]
+    ]
+    assert len(our_questions) == 2, (
+        f"Expected at least 2 Q&A pairs in history after 2 queries, got {len(our_questions)}"
+    )
+
+    session_id_2 = "test_session_separate"
+
+    result3 = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="What is DataCo?",
+        session_id=session_id_2,
+    )
+
+    assert isinstance(result3, list) and len(result3) > 0, (
+        f"Different session should return non-empty list, got: {result3!r}"
+    )
+
+    history3 = await cache_engine.get_latest_qa(str(user.id), session_id_2, last_n=10)
+    our_qa_session2 = [h for h in history3 if h.question == "What is DataCo?"]
+    assert len(our_qa_session2) == 1, "Session 2 should have 'What is DataCo?' question"
+
+    result4 = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="Test default session",
+        session_id=None,
+    )
+
+    assert isinstance(result4, list) and len(result4) > 0, (
+        f"Default session should return non-empty list, got: {result4!r}"
+    )
+
+    history_default = await cache_engine.get_latest_qa(str(user.id), "default_session", last_n=10)
+    our_qa_default = [h for h in history_default if h.question == "Test default session"]
+    assert len(our_qa_default) == 1, "Should find 'Test default session' in default_session"
+
+    session_id_rag = "test_session_rag"
+
+    result_rag = await xinggraph.search(
+        query_type=SearchType.RAG_COMPLETION,
+        query_text="What companies are mentioned?",
+        session_id=session_id_rag,
+    )
+
+    assert isinstance(result_rag, list) and len(result_rag) > 0, (
+        f"RAG_COMPLETION should return non-empty list, got: {result_rag!r}"
+    )
+
+    history_rag = await cache_engine.get_latest_qa(str(user.id), session_id_rag, last_n=10)
+    our_qa_rag = [h for h in history_rag if h.question == "What companies are mentioned?"]
+    assert len(our_qa_rag) == 1, "Should find RAG question in history"
+    _assert_used_graph_element_ids_shape(our_qa_rag[0])
+
+    session_id_decomposition = "test_session_decomposition"
+
+    result_decomposition = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION_DECOMPOSITION,
+        query_text="What do you know about TechCorp and DataCo?",
+        session_id=session_id_decomposition,
+    )
+
+    assert isinstance(result_decomposition, list) and len(result_decomposition) > 0, (
+        "GRAPH_COMPLETION_DECOMPOSITION should return non-empty list, "
+        f"got: {result_decomposition!r}"
+    )
+
+    history_decomposition = await cache_engine.get_latest_qa(
+        str(user.id), session_id_decomposition, last_n=10
+    )
+    our_qa_decomposition = [
+        h
+        for h in history_decomposition
+        if h.question == "What do you know about TechCorp and DataCo?"
+    ]
+    assert len(our_qa_decomposition) == 1, "Should find decomposition question in history"
+    _assert_used_graph_element_ids_shape(our_qa_decomposition[0])
+
+    session_id_decomposition_combined = "test_session_decomposition_combined"
+
+    result_decomposition_combined = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION_DECOMPOSITION,
+        query_text="What do you know about TechCorp and DataCo?",
+        session_id=session_id_decomposition_combined,
+        retriever_specific_config={"decomposition_mode": "combined_triplets_context"},
+    )
+
+    assert (
+        isinstance(result_decomposition_combined, list) and len(result_decomposition_combined) > 0
+    ), (
+        "GRAPH_COMPLETION_DECOMPOSITION combined mode should return non-empty list, "
+        f"got: {result_decomposition_combined!r}"
+    )
+
+    history_decomposition_combined = await cache_engine.get_latest_qa(
+        str(user.id), session_id_decomposition_combined, last_n=10
+    )
+    our_qa_decomposition_combined = [
+        h
+        for h in history_decomposition_combined
+        if h.question == "What do you know about TechCorp and DataCo?"
+    ]
+    assert len(our_qa_decomposition_combined) == 1, (
+        "Should find combined decomposition question in history"
+    )
+    _assert_used_graph_element_ids_shape(our_qa_decomposition_combined[0])
+
+    session_id_cot = "test_session_cot"
+
+    result_cot = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION_COT,
+        query_text="What do you know about TechCorp?",
+        session_id=session_id_cot,
+    )
+
+    assert isinstance(result_cot, list) and len(result_cot) > 0, (
+        f"GRAPH_COMPLETION_COT should return non-empty list, got: {result_cot!r}"
+    )
+
+    history_cot = await cache_engine.get_latest_qa(str(user.id), session_id_cot, last_n=10)
+    our_qa_cot = [h for h in history_cot if h.question == "What do you know about TechCorp?"]
+    assert len(our_qa_cot) == 1, "Should find CoT question in history"
+    _assert_used_graph_element_ids_shape(our_qa_cot[0])
+
+    session_id_ext = "test_session_ext"
+
+    result_ext = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION_CONTEXT_EXTENSION,
+        query_text="Tell me about DataCo",
+        session_id=session_id_ext,
+    )
+
+    assert isinstance(result_ext, list) and len(result_ext) > 0, (
+        f"GRAPH_COMPLETION_CONTEXT_EXTENSION should return non-empty list, got: {result_ext!r}"
+    )
+
+    history_ext = await cache_engine.get_latest_qa(str(user.id), session_id_ext, last_n=10)
+    our_qa_ext = [h for h in history_ext if h.question == "Tell me about DataCo"]
+    assert len(our_qa_ext) == 1, "Should find Context Extension question in history"
+    _assert_used_graph_element_ids_shape(our_qa_ext[0])
+
+    session_id_summary = "test_session_summary"
+
+    result_summary = await xinggraph.search(
+        query_type=SearchType.GRAPH_SUMMARY_COMPLETION,
+        query_text="What are the key points about TechCorp?",
+        session_id=session_id_summary,
+    )
+
+    assert isinstance(result_summary, list) and len(result_summary) > 0, (
+        f"GRAPH_SUMMARY_COMPLETION should return non-empty list, got: {result_summary!r}"
+    )
+
+    history_summary = await cache_engine.get_latest_qa(str(user.id), session_id_summary, last_n=10)
+    our_qa_summary = [
+        h for h in history_summary if h.question == "What are the key points about TechCorp?"
+    ]
+    assert len(our_qa_summary) == 1, "Should find Summary question in history"
+    _assert_used_graph_element_ids_shape(our_qa_summary[0])
+
+    session_id_temporal = "test_session_temporal"
+
+    result_temporal = await xinggraph.search(
+        query_type=SearchType.TEMPORAL,
+        query_text="Tell me about the companies",
+        session_id=session_id_temporal,
+    )
+
+    assert isinstance(result_temporal, list) and len(result_temporal) > 0, (
+        f"TEMPORAL should return non-empty list, got: {result_temporal!r}"
+    )
+
+    history_temporal = await cache_engine.get_latest_qa(
+        str(user.id), session_id_temporal, last_n=10
+    )
+    our_qa_temporal = [h for h in history_temporal if h.question == "Tell me about the companies"]
+    assert len(our_qa_temporal) == 1, "Should find Temporal question in history"
+    _assert_used_graph_element_ids_shape(our_qa_temporal[0])
+
+    session_id_triplet = "test_session_triplet"
+
+    result_triplet = await xinggraph.search(
+        query_type=SearchType.TRIPLET_COMPLETION,
+        query_text="What companies are mentioned?",
+        session_id=session_id_triplet,
+    )
+
+    assert isinstance(result_triplet, list) and len(result_triplet) > 0, (
+        f"TRIPLET_COMPLETION should return non-empty list, got: {result_triplet!r}"
+    )
+
+    history_triplet = await cache_engine.get_latest_qa(str(user.id), session_id_triplet, last_n=10)
+    our_qa_triplet = [h for h in history_triplet if h.question == "What companies are mentioned?"]
+    assert len(our_qa_triplet) == 1, "Should find Triplet question in history"
+    _assert_used_graph_element_ids_shape(our_qa_triplet[0], expect_none=True)
+
+    # Session history via new session SDK (replaces legacy get_conversation_history)
+    entries = await xinggraph.session.get_session(session_id=session_id_1, user=user, last_n=10)
+    assert len(entries) >= 2, (
+        "Session should have at least 2 Q&A entries (two searches in session_id_1)"
+    )
+
+    from xinggraph.memify_pipelines.persist_sessions_in_knowledge_graph import (
+        persist_sessions_in_knowledge_graph_pipeline,
+    )
+
+    logger.info("Starting persist_sessions_in_knowledge_graph tests")
+
+    await persist_sessions_in_knowledge_graph_pipeline(
+        user=user,
+        session_ids=[session_id_1, session_id_2],
+        dataset=dataset_name,
+        run_in_background=False,
+    )
+
+    graph_engine = await get_graph_engine()
+    graph = await graph_engine.get_graph_data()
+
+    type_counts = Counter(node_data[1].get("type", {}) for node_data in graph[0])
+
+    "Tests the correct number of NodeSet nodes after session persistence"
+    assert type_counts.get("NodeSet", 0) == 1, (
+        f"Number of NodeSets in the graph is incorrect, found {type_counts.get('NodeSet', 0)} but there should be exactly 1."
+    )
+
+    "Tests the correct number of DocumentChunk nodes after session persistence"
+    assert type_counts.get("DocumentChunk", 0) == 4, (
+        f"Number of DocumentChunk ndoes in the graph is incorrect, found {type_counts.get('DocumentChunk', 0)} but there should be exactly 4 (2 original documents, 2 sessions)."
+    )
+
+    from xinggraph.infrastructure.databases.vector.get_vector_engine import get_vector_engine_async
+
+    vector_engine = await get_vector_engine_async()
+    collection_size = await vector_engine.search(
+        collection_name="DocumentChunk_text",
+        query_text="test",
+        limit=1000,
+    )
+    assert len(collection_size) == 4, (
+        f"DocumentChunk_text collection should have exactly 4 embeddings, found {len(collection_size)}"
+    )
+    ######END: OLD SESSION FUNCTIONALITY######
+
+    ######E2E: NEW SESSION SDK (get_session, add_feedback, delete_feedback) ######
+    logger.info("Starting e2e tests for session SDK: get_session, add_feedback, delete_feedback")
+    session_id_sdk = "test_session_graph"  # reuse session that has Q&As from above
+    entries = await xinggraph.session.get_session(session_id=session_id_sdk, user=user, last_n=10)
+    assert len(entries) >= 2, (
+        f"Expected at least 2 entries for session {session_id_sdk!r}, got {len(entries)}"
+    )
+    latest = entries[-1]
+    assert latest.qa_id, "Latest entry should have qa_id"
+    qa_id_for_feedback = latest.qa_id
+
+    ok_add = await xinggraph.session.add_feedback(
+        session_id=session_id_sdk,
+        qa_id=qa_id_for_feedback,
+        feedback_text="E2E test feedback",
+        feedback_score=5,
+        user=user,
+    )
+    assert ok_add is True, "add_feedback should return True"
+
+    entries_after_add = await xinggraph.session.get_session(
+        session_id=session_id_sdk, user=user, last_n=10
+    )
+    latest_after = next((e for e in entries_after_add if e.qa_id == qa_id_for_feedback), None)
+    assert latest_after is not None, "Entry with qa_id should exist after add_feedback"
+    assert latest_after.feedback_text == "E2E test feedback", "feedback_text should be set"
+    assert latest_after.feedback_score == 5, "feedback_score should be 5"
+
+    ok_del = await xinggraph.session.delete_feedback(
+        session_id=session_id_sdk, qa_id=qa_id_for_feedback, user=user
+    )
+    assert ok_del is True, "delete_feedback should return True"
+
+    entries_after_del = await xinggraph.session.get_session(
+        session_id=session_id_sdk, user=user, last_n=10
+    )
+    latest_after_del = next((e for e in entries_after_del if e.qa_id == qa_id_for_feedback), None)
+    assert latest_after_del is not None, "Entry should still exist after delete_feedback"
+    assert latest_after_del.feedback_text is None, "feedback_text should be cleared"
+    assert latest_after_del.feedback_score is None, "feedback_score should be cleared"
+    logger.info("Session SDK e2e tests (get_session, add_feedback, delete_feedback) passed")
+    ###### END E2E: NEW SESSION SDK #####
+
+    ###### E2E: Automatic feedback detection (when caching and auto_feedback enabled) ######
+    logger.info("Starting e2e tests for automatic feedback detection")
+    session_id_autofeedback = "test_session_autofeedback"
+    await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="What is TechCorp?",
+        session_id=session_id_autofeedback,
+    )
+    result_autofeedback = await xinggraph.search(
+        query_type=SearchType.GRAPH_COMPLETION,
+        query_text="Thanks, that was really helpful!",
+        session_id=session_id_autofeedback,
+    )
+    assert result_autofeedback is not None, (
+        "Second search (feedback-like message) should return a result"
+    )
+    entries_autofeedback = await xinggraph.session.get_session(
+        session_id=session_id_autofeedback, user=user, last_n=10
+    )
+    assert len(entries_autofeedback) == 1, (
+        "With auto_feedback enabled, a feedback-only message must not create a new QA; "
+        f"expected 1 entry, got {len(entries_autofeedback)}"
+    )
+    entry_autofeedback = entries_autofeedback[0]
+    assert entry_autofeedback.question == "What is TechCorp?", (
+        "Single entry must be the first question; feedback-only text was not stored as new QA"
+    )
+    assert getattr(entry_autofeedback, "feedback_text", None) is None
+    assert getattr(entry_autofeedback, "feedback_score", None) is None
+    logger.info(
+        "Automatic feedback detection e2e passed without auto-populating QA feedback fields",
+    )
+    ###### END E2E: Automatic feedback detection #####
+
+    await xinggraph.prune.prune_data()
+    await xinggraph.prune.prune_system(metadata=True)
+
+    logger.info("All conversation history tests passed successfully")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())

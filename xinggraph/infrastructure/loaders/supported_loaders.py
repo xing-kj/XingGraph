@@ -1,0 +1,41 @@
+from xinggraph.infrastructure.loaders import LoaderInterface
+from xinggraph.infrastructure.loaders.core import AudioLoader, CsvLoader, ImageLoader, TextLoader
+from xinggraph.infrastructure.loaders.external import PyPdfLoader
+
+# Registry for loader implementations
+supported_loaders: dict[str, type[LoaderInterface]] = {
+    PyPdfLoader.loader_name: PyPdfLoader,
+    TextLoader.loader_name: TextLoader,
+    ImageLoader.loader_name: ImageLoader,
+    AudioLoader.loader_name: AudioLoader,
+    CsvLoader.loader_name: CsvLoader,
+}
+
+# Try adding optional loaders
+try:
+    from xinggraph.infrastructure.loaders.external import UnstructuredLoader
+
+    supported_loaders[UnstructuredLoader.loader_name] = UnstructuredLoader
+except ImportError:
+    pass
+
+try:
+    from xinggraph.infrastructure.loaders.external import AdvancedPdfLoader
+
+    supported_loaders[AdvancedPdfLoader.loader_name] = AdvancedPdfLoader
+except ImportError:
+    pass
+
+try:
+    from xinggraph.infrastructure.loaders.external import BeautifulSoupLoader
+
+    supported_loaders[BeautifulSoupLoader.loader_name] = BeautifulSoupLoader
+except ImportError:
+    pass
+
+try:
+    from xinggraph.infrastructure.loaders.external import DoclingLoader
+
+    supported_loaders[DoclingLoader.loader_name] = DoclingLoader
+except ImportError:
+    pass

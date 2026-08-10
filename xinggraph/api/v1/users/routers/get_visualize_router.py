@@ -1,0 +1,156 @@
+from typing import List
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
+from uuid import UUID
+from xinggraph.shared.logging_utils import get_logger
+from xinggraph.modules.users.methods import get_authenticated_user, get_user
+from xinggraph.modules.data.methods import get_authorized_existing_datasets
+from xinggraph.modules.users.models import User
+
+from xinggraph.shared.utils import send_telemetry
+from xinggraph import __version__ as xinggraph_version
+
+logger = get_logger()
+
+
+class UserDatasetPair(BaseModel):
+    user_id: UUID = Field(
+        description=(
+            "UUID of the user who owns the dataset "
+            "(superuser-only endpoint; obtain via the permissions/users APIs)."
+        ),
+        examples=["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+    )
+    dataset_id: UUID = Field(
+        description=(
+            "UUID of the dataset to include in the combined visualization "
+            "(must be readable by user_id)."
+        ),
+        examples=["7c9e6679-7425-40de-944b-e07fc1f90ae7"],
+    )
+
+
+def get_visualize_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.get("", response_model=None)
+    async def visualize(
+        dataset_id: UUID = Query(
+            ...,
+            description=(
+                "UUID of the dataset to visualize. "
+                "List your datasets via GET /api/v1/datasets to find it."
+            ),
+            examples=[""],
+        ),
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Generate an HTML visualization of the dataset's knowledge graph.
+
+        This endpoint creates an interactive HTML visualization of the knowledge graph
+        for a specific dataset. The visualization displays nodes and edges representing
+        entities and their relationships, allowing users to explore the graph structure
+        visually.
+
+        ## Query Parameters
+        - **dataset_id** (UUID): The unique identifier of the dataset to visualize
+
+        ## Response
+        Returns an HTML page containing the interactive graph visualization.
+
+        ## Error Codes
+        - **409 Conflict**: Dataset not found, permission denied, or visualization
+          failed (detail in the `error` field)
+
+        ## Notes
+        - User must have read permissions on the dataset
+        - Visualization is interactive and allows graph exploration
+        """
+        send_telemetry(
+            "Visualize API Endpoint Invoked",
+            user.id,
+            additional_properties={
+                "endpoint": "GET /v1/visualize",
+                "dataset_id": str(dataset_id),
+                "xinggraph_version": xinggraph_version,
+            },
+        )
+
+        from xinggraph.api.v1.visualize import visualize_graph
+
+        try:
+            # Verify user has permission to read dataset
+            dataset = await get_authorized_existing_datasets([dataset_id], "read", user)
+
+            html_visualization = await visualize_graph(dataset=dataset[0].id, user=user)
+            return HTMLResponse(html_visualization)
+
+        except Exception as error:
+            return JSONResponse(status_code=409, content={"error": str(error)})
+
+    @router.post("/multi", response_model=None)
+    async def visualize_multi(
+        pairs: List[UserDatasetPair],
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Generate a combined HTML visualization of graph data from multiple users' datasets.
+
+        This endpoint aggregates knowledge graphs from multiple user+dataset pairs
+        into a single interactive visualization, with each user's nodes tagged for
+        color-by-user rendering.
+
+        ## Request Body
+        A JSON array of objects, each with:
+        - **user_id** (UUID): The user who owns the dataset
+        - **dataset_id** (UUID): The dataset to include
+
+        ## Response
+        Returns an HTML page containing the combined interactive graph visualization.
+
+        ## Error Codes
+        - **403 Forbidden**: Caller is not a superuser
+        - **409 Conflict**: A user/dataset pair does not exist, is not readable,
+          or visualization failed (detail in the `error` field)
+
+        ## Notes
+        - Requires superuser privileges to view other users' data
+        - Each user+dataset pair must exist and be accessible
+        """
+        send_telemetry(
+            "Visualize Multi API Endpoint Invoked",
+            user.id,
+            additional_properties={
+                "endpoint": "POST /v1/visualize/multi",
+                "pair_count": len(pairs),
+                "xinggraph_version": xinggraph_version,
+            },
+        )
+
+        from xinggraph.api.v1.visualize import visualize_multi_user_graph
+
+        try:
+            if not user.is_superuser:
+                return JSONResponse(
+                    status_code=403,
+                    content={"error": "Superuser privileges required for multi-user visualization"},
+                )
+
+            user_dataset_pairs = []
+            for pair in pairs:
+                target_user = await get_user(pair.user_id)
+                datasets = await get_authorized_existing_datasets(
+                    [pair.dataset_id], "read", target_user
+                )
+                user_dataset_pairs.append((target_user, datasets[0]))
+
+            html_visualization = await visualize_multi_user_graph(user_dataset_pairs)
+            return HTMLResponse(html_visualization)
+
+        except Exception as error:
+            return JSONResponse(status_code=409, content={"error": str(error)})
+
+    return router

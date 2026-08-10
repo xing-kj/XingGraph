@@ -1,0 +1,660 @@
+"""
+Tests for individual CLI commands with proper mocking and coroutine handling.
+"""
+
+import os
+import pytest
+import sys
+import argparse
+import asyncio
+from uuid import uuid4
+from unittest.mock import patch, MagicMock, AsyncMock, ANY
+import xinggraph
+from xinggraph.cli.commands.add_command import AddCommand
+from xinggraph.cli.commands.search_command import SearchCommand
+from xinggraph.cli.commands.cognify_command import CognifyCommand
+from xinggraph.cli.commands.delete_command import DeleteCommand
+from xinggraph.cli.commands.config_command import ConfigCommand
+from xinggraph.cli.exceptions import CliCommandException
+from xinggraph.modules.data.methods.get_deletion_counts import DeletionCountsPreview
+from xinggraph.modules.engine.operations.setup import setup
+from xinggraph.modules.users.models import User
+
+
+# Mock asyncio.run to properly handle coroutines
+def _mock_run(coro):
+    # Create an event loop and run the coroutine
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def _mock_user():
+    """Return a fake user with an id for resolve_cli_user mocks."""
+    u = MagicMock()
+    u.id = uuid4()
+    return u
+
+
+# Patch resolve_cli_user globally for all tests that use _mock_run,
+# so they don't hit the real database.
+_RESOLVE_USER_PATCH = "xinggraph.cli.user_resolution.resolve_cli_user"
+
+
+class TestAddCommand:
+    """Test the AddCommand class"""
+
+    def test_command_properties(self):
+        """Test basic command properties"""
+        command = AddCommand()
+        assert command.command_string == "add"
+        assert "Add data" in command.help_string
+        assert command.docs_url is not None
+
+    def test_configure_parser(self):
+        """Test parser configuration"""
+        command = AddCommand()
+        parser = argparse.ArgumentParser()
+
+        command.configure_parser(parser)
+
+        # Check that required arguments are added
+        actions = {action.dest: action for action in parser._actions}
+        assert "data" in actions
+        assert "dataset_name" in actions
+
+        # Check data argument accepts multiple values
+        assert actions["data"].nargs == "+"
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.add_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_single_item(self, mock_asyncio_run, _mock_resolve):
+        """Test execute with single data item"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.add = AsyncMock()
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = AddCommand()
+            args = argparse.Namespace(data=["test.txt"], dataset_name="test_dataset")
+            command.execute(args)
+
+        mock_asyncio_run.assert_called_once()
+        assert asyncio.iscoroutine(mock_asyncio_run.call_args[0][0])
+        mock_xinggraph.add.assert_awaited_once_with(
+            data="test.txt", dataset_name="test_dataset", user=ANY
+        )
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.add_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_multiple_items(self, mock_asyncio_run, _mock_resolve):
+        """Test execute with multiple data items"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.add = AsyncMock()
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = AddCommand()
+            args = argparse.Namespace(data=["test1.txt", "test2.txt"], dataset_name="test_dataset")
+            command.execute(args)
+
+        mock_asyncio_run.assert_called_once()
+        assert asyncio.iscoroutine(mock_asyncio_run.call_args[0][0])
+        mock_xinggraph.add.assert_awaited_once_with(
+            data=["test1.txt", "test2.txt"], dataset_name="test_dataset", user=ANY
+        )
+
+    @patch("xinggraph.cli.commands.add_command.asyncio.run")
+    def test_execute_with_exception(self, mock_asyncio_run):
+        """Test execute handles exceptions properly"""
+        command = AddCommand()
+        args = argparse.Namespace(data=["test.txt"], dataset_name="test_dataset")
+
+        mock_asyncio_run.side_effect = Exception("Test error")
+
+        with pytest.raises(CliCommandException):
+            command.execute(args)
+
+
+class TestSearchCommand:
+    """Test the SearchCommand class"""
+
+    def test_command_properties(self):
+        """Test basic command properties"""
+        command = SearchCommand()
+        assert command.command_string == "search"
+        assert "Search and query" in command.help_string
+        assert command.docs_url is not None
+
+    def test_configure_parser(self):
+        """Test parser configuration"""
+        command = SearchCommand()
+        parser = argparse.ArgumentParser()
+
+        command.configure_parser(parser)
+
+        # Check that required arguments are added
+        actions = {action.dest: action for action in parser._actions}
+        assert "query_text" in actions
+        assert "query_type" in actions
+        assert "datasets" in actions
+        assert "top_k" in actions
+        assert "output_format" in actions
+
+        # Check default values
+        assert actions["query_type"].default == "GRAPH_COMPLETION"
+        assert actions["top_k"].default == 10
+        assert actions["output_format"].default == "pretty"
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.search_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_basic_search(self, mock_asyncio_run, _mock_resolve):
+        """Test execute with basic search"""
+        # Mock the xinggraph module and SearchType
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.search = AsyncMock(return_value=["result1", "result2"])
+        mock_search_type = MagicMock()
+        mock_search_type.__getitem__.return_value = "GRAPH_COMPLETION"
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = SearchCommand()
+            args = argparse.Namespace(
+                query_text="test query",
+                query_type="GRAPH_COMPLETION",
+                datasets=None,
+                top_k=10,
+                system_prompt=None,
+                output_format="pretty",
+            )
+            command.execute(args)
+
+        mock_asyncio_run.assert_called_once()
+        assert asyncio.iscoroutine(mock_asyncio_run.call_args[0][0])
+        mock_xinggraph.search.assert_awaited_once_with(
+            query_text="test query",
+            query_type=ANY,
+            user=ANY,
+            datasets=None,
+            top_k=10,
+            system_prompt_path="answer_simple_question.txt",
+            session_id=ANY,
+        )
+        # verify the enum’s name separately
+        called_enum = mock_xinggraph.search.await_args.kwargs["query_type"]
+        assert called_enum.name == "GRAPH_COMPLETION"
+
+    @patch("xinggraph.cli.commands.search_command.asyncio.run")
+    def test_execute_with_exception(self, mock_asyncio_run):
+        """Test execute handles exceptions properly"""
+        command = SearchCommand()
+        args = argparse.Namespace(
+            query_text="test query",
+            query_type="GRAPH_COMPLETION",
+            datasets=None,
+            top_k=10,
+            system_prompt=None,
+            output_format="pretty",
+        )
+
+        mock_asyncio_run.side_effect = Exception("Search error")
+
+        with pytest.raises(CliCommandException):
+            command.execute(args)
+
+
+class TestCognifyCommand:
+    """Test the CognifyCommand class"""
+
+    def test_command_properties(self):
+        """Test basic command properties"""
+        command = CognifyCommand()
+        assert command.command_string == "cognify"
+        assert "Transform ingested data" in command.help_string
+        assert command.docs_url is not None
+
+    def test_configure_parser(self):
+        """Test parser configuration"""
+        command = CognifyCommand()
+        parser = argparse.ArgumentParser()
+
+        command.configure_parser(parser)
+
+        # Check that arguments are added
+        actions = {action.dest: action for action in parser._actions}
+        assert "datasets" in actions
+        assert "chunk_size" in actions
+        assert "ontology_file" in actions
+        assert "chunker" in actions
+        assert "background" in actions
+        assert "verbose" in actions
+
+        # Check default values
+        assert actions["chunker"].default == "TextChunker"
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.cognify_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_basic_cognify(self, mock_asyncio_run, _mock_resolve):
+        """Test execute with basic cognify"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.cognify = AsyncMock(return_value="success")
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = CognifyCommand()
+            args = argparse.Namespace(
+                datasets=None,
+                chunk_size=None,
+                ontology_file=None,
+                chunker="TextChunker",
+                background=False,
+                verbose=False,
+            )
+            command.execute(args)
+
+        mock_asyncio_run.assert_called_once()
+        assert asyncio.iscoroutine(mock_asyncio_run.call_args[0][0])
+        from xinggraph.modules.chunking.TextChunker import TextChunker
+
+        mock_xinggraph.cognify.assert_awaited_once_with(
+            datasets=None,
+            user=ANY,
+            chunk_size=None,
+            config=None,
+            chunker=TextChunker,
+            run_in_background=False,
+            chunks_per_batch=None,
+        )
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.cognify_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_with_ontology_file(self, mock_asyncio_run, _mock_resolve, tmp_path):
+        """--ontology-file is translated into the canonical ontology Config structure"""
+        ontology_path = tmp_path / "ontology.owl"
+        ontology_path.write_text(
+            '<?xml version="1.0"?>'
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF>'
+        )
+
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.cognify = AsyncMock(return_value="success")
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = CognifyCommand()
+            args = argparse.Namespace(
+                datasets=None,
+                chunk_size=None,
+                ontology_file=str(ontology_path),
+                chunker="TextChunker",
+                background=False,
+                verbose=False,
+            )
+            command.execute(args)
+
+        from xinggraph.modules.ontology.rdf_xml.RDFLibOntologyResolver import RDFLibOntologyResolver
+
+        config = mock_xinggraph.cognify.await_args.kwargs["config"]
+        resolver = config["ontology_config"]["ontology_resolver"]
+        assert isinstance(resolver, RDFLibOntologyResolver)
+        assert resolver.ontology_file == str(ontology_path)
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.cognify_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_with_multiple_ontology_files(self, mock_asyncio_run, _mock_resolve, tmp_path):
+        """A comma-separated --ontology-file loads all listed files into the resolver"""
+        rdf_stub = (
+            '<?xml version="1.0"?>'
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF>'
+        )
+        first_path = tmp_path / "first.owl"
+        second_path = tmp_path / "second.owl"
+        first_path.write_text(rdf_stub)
+        second_path.write_text(rdf_stub)
+
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.cognify = AsyncMock(return_value="success")
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = CognifyCommand()
+            args = argparse.Namespace(
+                datasets=None,
+                chunk_size=None,
+                ontology_file=f"{first_path},{second_path}",
+                chunker="TextChunker",
+                background=False,
+                verbose=False,
+            )
+            command.execute(args)
+
+        config = mock_xinggraph.cognify.await_args.kwargs["config"]
+        resolver = config["ontology_config"]["ontology_resolver"]
+        assert resolver.ontology_file == [str(first_path), str(second_path)]
+
+    def test_execute_with_missing_ontology_file(self):
+        """A nonexistent --ontology-file fails fast, before any processing"""
+        command = CognifyCommand()
+        args = argparse.Namespace(
+            datasets=None,
+            chunk_size=None,
+            ontology_file="/nonexistent/ontology.owl",
+            chunker="TextChunker",
+            background=False,
+            verbose=False,
+        )
+
+        with pytest.raises(CliCommandException, match="Ontology file not found"):
+            command.execute(args)
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.cognify_command.asyncio.run", side_effect=_mock_run)
+    def test_cli_call_matches_real_cognify_signature(self, mock_asyncio_run, _mock_resolve):
+        """Every kwarg the CLI passes must be an explicit parameter of the real
+        xinggraph.cognify(). Its **kwargs silently swallows stray arguments and
+        forwards them to the LLM client, so a mocked call assertion alone
+        cannot catch signature drift (issue #3991)."""
+        import inspect
+
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.cognify = AsyncMock(return_value="success")
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = CognifyCommand()
+            args = argparse.Namespace(
+                datasets=None,
+                chunk_size=None,
+                ontology_file=None,
+                chunker="TextChunker",
+                background=False,
+                verbose=False,
+            )
+            command.execute(args)
+
+        passed = set(mock_xinggraph.cognify.await_args.kwargs)
+        real_params = inspect.signature(xinggraph.cognify).parameters
+        explicit = {
+            name
+            for name, param in real_params.items()
+            if param.kind in (param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+        }
+        unexpected = passed - explicit
+        assert not unexpected, (
+            f"CLI passes kwargs that are not explicit cognify() parameters: {unexpected}"
+        )
+
+    @patch("xinggraph.cli.commands.cognify_command.asyncio.run")
+    def test_execute_with_exception(self, mock_asyncio_run):
+        """Test execute handles exceptions properly"""
+        command = CognifyCommand()
+        args = argparse.Namespace(
+            datasets=None,
+            chunk_size=None,
+            ontology_file=None,
+            chunker="TextChunker",
+            background=False,
+            verbose=False,
+        )
+
+        mock_asyncio_run.side_effect = Exception("Cognify error")
+
+        with pytest.raises(CliCommandException):
+            command.execute(args)
+
+
+class TestDeleteCommand:
+    """Test the DeleteCommand class"""
+
+    def test_command_properties(self):
+        """Test basic command properties"""
+        command = DeleteCommand()
+        assert command.command_string == "delete"
+        assert "Delete data" in command.help_string
+        assert command.docs_url is not None
+
+    def test_configure_parser(self):
+        """Test parser configuration"""
+        command = DeleteCommand()
+        parser = argparse.ArgumentParser()
+
+        command.configure_parser(parser)
+
+        # Check that arguments are added
+        actions = {action.dest: action for action in parser._actions}
+        assert "dataset_name" in actions
+        assert "all" in actions
+        assert "force" in actions
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.delete_command.xinggraph_datasets")
+    @patch("xinggraph.cli.commands.delete_command.get_datasets_by_name")
+    @patch("xinggraph.cli.commands.delete_command.fmt.confirm")
+    @patch("xinggraph.cli.commands.delete_command.get_deletion_counts")
+    @patch("xinggraph.cli.commands.delete_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_delete_dataset_with_confirmation(
+        self,
+        mock_asyncio_run,
+        get_deletion_counts_mock,
+        mock_confirm,
+        get_datasets_mock,
+        datasets_mock,
+        _mock_resolve,
+    ):
+        """Test execute delete dataset with user confirmation"""
+        data_directory_path = os.path.join(
+            os.path.dirname(__file__), ".data_storage/test_cli_commands"
+        )
+        xinggraph_directory_path = os.path.join(
+            os.path.dirname(__file__), ".xinggraph_system/test_cli_commands"
+        )
+
+        xinggraph.config.data_root_directory(data_directory_path)
+        xinggraph.config.system_root_directory(xinggraph_directory_path)
+
+        asyncio.run(xinggraph.prune.prune_data())
+        asyncio.run(xinggraph.prune.prune_system(metadata=True))
+
+        asyncio.run(setup())
+
+        expected_dataset_id = uuid4()
+        mock_dataset = MagicMock()
+        mock_dataset.id = expected_dataset_id
+
+        get_datasets_mock.return_value = [mock_dataset]
+
+        get_deletion_counts_mock = AsyncMock()
+        get_deletion_counts_mock.return_value = DeletionCountsPreview()
+
+        delete_dataset_mock = AsyncMock()
+        datasets_mock.empty_dataset = delete_dataset_mock
+
+        command = DeleteCommand()
+        args = argparse.Namespace(dataset_name="test_dataset", all=False, force=False)
+
+        mock_confirm.return_value = True
+
+        command.execute(args)
+
+        delete_dataset_mock.assert_awaited_once_with(dataset_id=expected_dataset_id, user=ANY)
+
+        asyncio.run(xinggraph.prune.prune_data())
+        asyncio.run(xinggraph.prune.prune_system(metadata=True))
+
+    @patch("xinggraph.cli.commands.delete_command.get_deletion_counts")
+    @patch("xinggraph.cli.commands.delete_command.fmt.confirm")
+    def test_execute_delete_cancelled(self, mock_confirm, mock_get_deletion_counts):
+        """Test execute when user cancels deletion"""
+        mock_get_deletion_counts = AsyncMock()
+        mock_get_deletion_counts.return_value = DeletionCountsPreview()
+        command = DeleteCommand()
+        args = argparse.Namespace(dataset_name="test_dataset", user_id=None, all=False, force=False)
+
+        mock_confirm.return_value = False
+
+        # Should not raise exception, just return
+        command.execute(args)
+
+        mock_confirm.assert_called_once_with(f"Delete dataset '{args.dataset_name}'?")
+
+    @patch(_RESOLVE_USER_PATCH, new_callable=lambda: AsyncMock(return_value=_mock_user()))
+    @patch("xinggraph.cli.commands.delete_command.xinggraph_datasets")
+    @patch("xinggraph.cli.commands.delete_command.asyncio.run", side_effect=_mock_run)
+    def test_execute_delete_forced(self, mock_asyncio_run, datasets_mock, _mock_resolve):
+        """Test execute delete with force flag"""
+        delete_all_mock = AsyncMock()
+        datasets_mock.delete_all = delete_all_mock
+
+        command = DeleteCommand()
+        args = argparse.Namespace(
+            dataset_name=None,
+            force=True,
+            all=True,
+        )
+
+        command.execute(args)
+
+        delete_all_mock.assert_awaited_once_with(user=ANY)
+
+    def test_execute_no_delete_target(self):
+        """Test execute when no delete target is specified"""
+        command = DeleteCommand()
+        args = argparse.Namespace(force=True)
+
+        # Should not raise exception, just return with error message
+        command.execute(args)
+
+    @patch("xinggraph.cli.commands.delete_command.asyncio.run")
+    def test_execute_with_exception(self, mock_asyncio_run):
+        """Test execute handles exceptions properly"""
+        command = DeleteCommand()
+        args = argparse.Namespace(dataset_name="test_dataset", user_id=None, all=False, force=True)
+
+        mock_asyncio_run.side_effect = Exception("Delete error")
+
+        with pytest.raises(CliCommandException):
+            command.execute(args)
+
+
+class TestConfigCommand:
+    """Test the ConfigCommand class"""
+
+    def test_command_properties(self):
+        """Test basic command properties"""
+        command = ConfigCommand()
+        assert command.command_string == "config"
+        assert "Manage xinggraph configuration" in command.help_string
+        assert command.docs_url is not None
+
+    def test_configure_parser(self):
+        """Test parser configuration"""
+        command = ConfigCommand()
+        parser = argparse.ArgumentParser()
+
+        command.configure_parser(parser)
+
+        # Check that subparsers are created
+        subparsers_actions = [
+            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+        ]
+        assert len(subparsers_actions) == 1
+
+        subparsers = subparsers_actions[0]
+        assert "get" in subparsers.choices
+        assert "set" in subparsers.choices
+        assert "list" in subparsers.choices
+        assert "unset" in subparsers.choices
+        assert "reset" in subparsers.choices
+
+    def test_execute_no_action(self):
+        """Test execute when no config action is provided"""
+        command = ConfigCommand()
+        args = argparse.Namespace()
+
+        # Should not raise exception, just return with error message
+        command.execute(args)
+
+    @patch("builtins.__import__")
+    def test_execute_get_action(self, mock_import):
+        """Test execute get action"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.config.get = MagicMock(return_value="openai")
+        mock_import.return_value = mock_xinggraph
+
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="get", key="llm_provider")
+
+        command.execute(args)
+
+    @patch("builtins.__import__")
+    def test_execute_set_action(self, mock_import):
+        """Test execute set action"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.config.set = MagicMock()
+        mock_import.return_value = mock_xinggraph
+
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="set", key="llm_provider", value="anthropic")
+
+        command.execute(args)
+
+    @patch("builtins.__import__")
+    def test_execute_set_action_json_value(self, mock_import):
+        """Test execute set action with JSON value"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.config.set = MagicMock()
+        mock_import.return_value = mock_xinggraph
+
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="set", key="chunk_size", value="1024")
+
+        command.execute(args)
+
+    def test_execute_list_action(self):
+        """Test execute list action"""
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="list")
+
+        # Should not raise exception
+        command.execute(args)
+
+    @patch("xinggraph.cli.commands.config_command.fmt.confirm")
+    def test_execute_unset_action(self, mock_confirm):
+        """Test execute unset action"""
+        # Mock the xinggraph module
+        mock_xinggraph = MagicMock()
+        mock_xinggraph.config.set_llm_provider = MagicMock()
+
+        with patch.dict(sys.modules, {"xinggraph": mock_xinggraph}):
+            command = ConfigCommand()
+            args = argparse.Namespace(config_action="unset", key="llm_provider", force=False)
+
+            mock_confirm.return_value = True
+
+            command.execute(args)
+
+        mock_confirm.assert_called_once()
+
+    @patch("xinggraph.cli.commands.config_command.fmt.confirm")
+    def test_execute_reset_action(self, mock_confirm):
+        """Test execute reset action"""
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="reset", force=False)
+
+        mock_confirm.return_value = True
+
+        # Should not raise exception
+        command.execute(args)
+
+        mock_confirm.assert_called_once()
+
+    def test_execute_with_exception(self):
+        """Test execute handles exceptions properly"""
+        # Test with an invalid action that will cause an exception in the main execute method
+        command = ConfigCommand()
+        args = argparse.Namespace(config_action="invalid_action")
+
+        # This should not raise CliCommandException, just handle it gracefully
+        # The config command handles unknown actions by showing an error message
+        command.execute(args)

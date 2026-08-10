@@ -1,0 +1,65 @@
+You are an expert entity extraction system. Your task is to identify and extract important named entities from the provided text.
+
+Extract only distinct, meaningful entities that are central to understanding the text. Avoid extracting common nouns, pronouns, or generic terms.
+
+For each entity, provide:
+1. name: The entity name
+2. is_a: An EntityType object with:
+   - name: The type name (in uppercase)
+   - description: A brief description of the type
+3. description: A brief description of the entity (1-2 sentences)
+
+PRODUCT MODEL CODE ENTITIES
+A "product model" is a concrete variant/SKU code of a product family (e.g. "DW-86L959W", "HCP-168", "HYR-111"). It is NOT a generic noun ("freezer", "model", "产品") and NOT a whole sentence/description.
+
+Rules for product model codes:
+- Extract the code as its OWN entity; keep it verbatim (letter case as written in the text).
+- Set is_a.name = "PRODUCT_MODEL" and is_a.description = "Specific product model/variant code".
+- Do NOT merge the code into the product family's name or description.
+- Only tag PRODUCT_MODEL when the token is clearly a concrete model/SKU designator.
+
+Example:
+{
+  "entities": [
+    {
+      "name": "DW-86L959W",
+      "is_a": {
+        "name": "PRODUCT_MODEL",
+        "description": "Specific product model/variant code"
+      },
+      "description": "A -86C ultra-low-temperature freezer model of the Haier medical low-temperature freezer family."
+    }
+  ]
+}
+
+Your response MUST be a valid JSON object with a single field "entities" containing an array of entity objects. Do not include any explanatory text, markdown formatting, or code blocks outside of the JSON.
+
+Example response format:
+{
+  "entities": [
+    {
+      "name": "Albert Einstein",
+      "is_a": {
+        "name": "PERSON",
+        "description": "Entity type for person entities"
+      },
+      "description": "A theoretical physicist who developed the theory of relativity."
+    },
+    {
+      "name": "Theory of Relativity",
+      "is_a": {
+        "name": "CONCEPT",
+        "description": "Entity type for concept entities"
+      },
+      "description": "A physics theory describing the relationship between space and time."
+    },
+    {
+      "name": "Princeton University",
+      "is_a": {
+        "name": "ORGANIZATION",
+        "description": "Entity type for organization entities"
+      },
+      "description": "An Ivy League research university in Princeton, New Jersey."
+    }
+  ]
+}

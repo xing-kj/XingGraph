@@ -1,0 +1,403 @@
+import asyncio
+from pydantic import BaseModel
+from typing import Union, Optional
+from uuid import UUID
+
+from xinggraph.modules.cognify.config import get_cognify_config
+from xinggraph.modules.cognify.rollback import cognify_rollback_handler
+from xinggraph.modules.ontology.ontology_env_config import get_ontology_env_config
+from xinggraph.shared.logging_utils import get_logger
+from xinggraph.shared.data_models import KnowledgeGraph
+from xinggraph.infrastructure.llm import get_max_chunk_tokens
+
+from xinggraph.modules.pipelines import run_pipeline
+from xinggraph.modules.pipelines.tasks.task import Task
+from xinggraph.infrastructure.databases.vector.embeddings.config import EmbeddingConfig
+from xinggraph.infrastructure.llm.config import LLMConfig
+from xinggraph.modules.chunking.TextChunker import TextChunker
+from xinggraph.modules.ontology.ontology_config import Config
+from xinggraph.modules.ontology.get_default_ontology_resolver import (
+    get_default_ontology_resolver,
+    get_ontology_resolver_from_env,
+)
+from xinggraph.modules.users.models import User
+
+from xinggraph.tasks.documents import (
+    classify_documents,
+    extract_chunks_from_documents,
+)
+from xinggraph.tasks.graph.extract_graph_and_summarize import extract_graph_and_summarize
+from xinggraph.tasks.storage import add_data_points
+from xinggraph.tasks.ingestion.extract_dlt_fk_edges import extract_dlt_fk_edges
+from xinggraph.modules.pipelines.layers.pipeline_execution_mode import get_pipeline_executor
+from xinggraph.tasks.temporal_graph.extract_events_and_entities import extract_events_and_timestamps
+from xinggraph.tasks.temporal_graph.extract_knowledge_graph_from_events import (
+    extract_knowledge_graph_from_events,
+)
+from xinggraph.modules.observability import new_span, XINGGRAPH_PIPELINE_NAME, XINGGRAPH_RESULT_SUMMARY
+
+
+logger = get_logger("cognify")
+
+
+async def cognify(
+    datasets: Union[str, list[str], list[UUID]] = None,
+    user: User = None,
+    graph_model: BaseModel = KnowledgeGraph,
+    chunker=TextChunker,
+    chunk_size: int = None,
+    chunks_per_batch: int = None,
+    config: Config = None,
+    vector_db_config: dict = None,
+    graph_db_config: dict = None,
+    run_in_background: bool = False,
+    incremental_loading: bool = True,
+    custom_prompt: Optional[str] = None,
+    temporal_cognify: bool = False,
+    data_per_batch: int = 20,
+    llm_config: Optional[LLMConfig] = None,
+    embedding_config: Optional[EmbeddingConfig] = None,
+    data_cache: bool = True,
+    **kwargs,
+):
+    """
+    Transform ingested data into a structured knowledge graph.
+
+    This is the core processing step in XingGraph that converts raw text and documents
+    into an intelligent knowledge graph. It analyzes content, extracts entities and
+    relationships, and creates semantic connections for enhanced search and reasoning.
+
+    Prerequisites:
+        - **LLM_API_KEY**: Must be configured (required for entity extraction and graph generation)
+        - **Data Added**: Must have data previously added via `xinggraph.add()`
+        - **Vector Database**: Must be accessible for embeddings storage
+        - **Graph Database**: Must be accessible for relationship storage
+
+    Input Requirements:
+        - **Datasets**: Must contain data previously added via `xinggraph.add()`
+        - **Content Types**: Works with any text-extractable content including:
+            * Natural language documents
+            * Structured data (CSV, JSON)
+            * Code repositories
+            * Academic papers and technical documentation
+            * Mixed multimedia content (with text extraction)
+
+    Processing Pipeline:
+        1. **Document Classification**: Identifies document types and structures
+        2. **Text Chunking**: Breaks content into semantically meaningful segments
+        3. **Entity Extraction**: Identifies key concepts, people, places, organizations
+        4. **Relationship Detection**: Discovers connections between entities
+        5. **Graph Construction**: Builds semantic knowledge graph with embeddings
+        6. **Content Summarization**: Creates text summaries for navigation
+
+    Graph Model Customization:
+        The `graph_model` parameter allows custom knowledge structures:
+        - **Default**: General-purpose KnowledgeGraph for any domain
+        - **Custom Models**: Domain-specific schemas (e.g., scientific papers, code analysis)
+        - **Ontology Integration**: Use `ontology_file_path` for predefined vocabularies
+
+    Args:
+        datasets: Dataset name(s) or dataset uuid to process. Processes all available data if None.
+            - Single dataset: "my_dataset"
+            - Multiple datasets: ["docs", "research", "reports"]
+            - None: Process all datasets for the user
+        user: User context for authentication and data access. Uses default if None.
+        graph_model: Pydantic model defining the knowledge graph structure.
+                    Defaults to KnowledgeGraph for general-purpose processing.
+        chunker: Text chunking strategy (TextChunker, LangchainChunker).
+                - TextChunker: Paragraph-based chunking (default, most reliable)
+                - LangchainChunker: Recursive character splitting with overlap
+                Determines how documents are segmented for processing.
+        chunk_size: Maximum tokens per chunk. Auto-calculated based on LLM if None.
+                   Formula: min(embedding_max_completion_tokens, llm_max_completion_tokens // 2)
+                   Default limits: ~512-8192 tokens depending on models.
+                   Smaller chunks = more granular but potentially fragmented knowledge.
+        chunks_per_batch: Number of chunks to be processed in a single batch in Cognify tasks.
+        vector_db_config: Custom vector database configuration for embeddings storage.
+        graph_db_config: Custom graph database configuration for relationship storage.
+        run_in_background: If True, starts processing asynchronously and returns immediately.
+                          If False, waits for completion before returning.
+                          Background mode recommended for large datasets (>100MB).
+                          Use pipeline_run_id from return value to monitor progress.
+        custom_prompt: Optional custom prompt string to use for entity extraction and graph generation.
+                      If provided, this prompt will be used instead of the default prompts for
+                      knowledge graph extraction. The prompt should guide the LLM on how to
+                      extract entities and relationships from the text content.
+
+    Returns:
+        Union[dict, list[PipelineRunInfo]]:
+            - **Blocking mode**: Dictionary mapping dataset_id -> PipelineRunInfo with:
+                * Processing status (completed/failed/in_progress)
+                * Extracted entity and relationship counts
+                * Processing duration and resource usage
+                * Error details if any failures occurred
+            - **Background mode**: List of PipelineRunInfo objects for tracking progress
+                * Use pipeline_run_id to monitor status
+                * Check completion via pipeline monitoring APIs
+
+    Next Steps:
+        After successful cognify processing, use search functions to query the knowledge:
+
+        ```python
+        import xinggraph
+        from xinggraph import SearchType
+
+        # Process your data into knowledge graph
+        await xinggraph.cognify()
+
+        # Query for insights using different search types:
+
+        # 1. Natural language completion with graph context
+        insights = await xinggraph.search(
+            "What are the main themes?",
+            query_type=SearchType.GRAPH_COMPLETION
+        )
+
+        # 2. Get entity relationships and connections
+        relationships = await xinggraph.search(
+            "connections between concepts",
+            query_type=SearchType.GRAPH_COMPLETION
+        )
+
+        # 3. Find relevant document chunks
+        chunks = await xinggraph.search(
+            "specific topic",
+            query_type=SearchType.CHUNKS
+        )
+        ```
+
+    Advanced Usage:
+        ```python
+        # Custom domain model for scientific papers
+        class ScientificPaper(DataPoint):
+            title: str
+            authors: List[str]
+            methodology: str
+            findings: List[str]
+
+        await xinggraph.cognify(
+            datasets=["research_papers"],
+            graph_model=ScientificPaper,
+            ontology_file_path="scientific_ontology.owl"
+        )
+
+        # Background processing for large datasets
+        run_info = await xinggraph.cognify(
+            datasets=["large_corpus"],
+            run_in_background=True
+        )
+        # Check status later with run_info.pipeline_run_id
+        ```
+
+
+    Environment Variables:
+        Required:
+        - LLM_API_KEY: API key for your LLM provider
+
+        Optional (same as add function):
+        - LLM_PROVIDER, LLM_MODEL, VECTOR_DB_PROVIDER, GRAPH_DATABASE_PROVIDER
+        - LLM_RATE_LIMIT_ENABLED: Enable rate limiting (default: False)
+        - LLM_RATE_LIMIT_REQUESTS: Max requests per interval (default: 60)
+    """
+    # Route to remote instance if connected via serve()
+    from xinggraph.api.v1.serve.state import get_remote_client
+
+    client = get_remote_client()
+    if client is not None:
+        return await client.cognify(
+            datasets,
+            chunk_size=chunk_size,
+            chunks_per_batch=chunks_per_batch,
+            custom_prompt=custom_prompt,
+            run_in_background=run_in_background,
+        )
+
+    with new_span("xinggraph.api.cognify") as span:
+        span.set_attribute(XINGGRAPH_PIPELINE_NAME, "cognify")
+        if datasets is not None:
+            span.set_attribute("xinggraph.cognify.datasets", str(datasets))
+
+        from xinggraph.modules.migrations.startup import run_migrations_and_block
+
+        await run_migrations_and_block(datasets, user)
+
+        if config is None:
+            ontology_config = get_ontology_env_config()
+            if (
+                ontology_config.ontology_file_path
+                and ontology_config.ontology_resolver
+                and ontology_config.matching_strategy
+            ):
+                config: Config = {
+                    "ontology_config": {
+                        "ontology_resolver": get_ontology_resolver_from_env(
+                            **ontology_config.to_dict()
+                        )
+                    }
+                }
+            else:
+                config: Config = {
+                    "ontology_config": {"ontology_resolver": get_default_ontology_resolver()}
+                }
+
+        if temporal_cognify:
+            tasks = await get_temporal_tasks(
+                user=user,
+                chunker=chunker,
+                chunk_size=chunk_size,
+                chunks_per_batch=chunks_per_batch,
+            )
+        else:
+            tasks = await get_default_tasks(
+                user=user,
+                graph_model=graph_model,
+                chunker=chunker,
+                chunk_size=chunk_size,
+                config=config,
+                custom_prompt=custom_prompt,
+                chunks_per_batch=chunks_per_batch,
+                **kwargs,
+            )
+
+        # By calling get pipeline executor we get a function that will have the run_pipeline run in the background or a function that we will need to wait for
+        pipeline_executor_func = get_pipeline_executor(run_in_background=run_in_background)
+
+        # Run the run_pipeline in the background or blocking based on executor
+        result = await pipeline_executor_func(
+            pipeline=run_pipeline,
+            tasks=tasks,
+            user=user,
+            datasets=datasets,
+            vector_db_config=vector_db_config,
+            graph_db_config=graph_db_config,
+            incremental_loading=incremental_loading,
+            use_pipeline_cache=False,
+            pipeline_name="cognify_pipeline",
+            data_per_batch=data_per_batch,
+            rollback_handler=cognify_rollback_handler,
+            llm_config=llm_config,
+            embedding_config=embedding_config,
+            data_cache=data_cache,
+        )
+
+        dataset_desc = str(datasets) if datasets else "all datasets"
+        span.set_attribute(
+            XINGGRAPH_RESULT_SUMMARY,
+            f"Cognify completed for {dataset_desc}",
+        )
+
+        return result
+
+
+async def get_default_tasks(  # TODO: Find out a better way to do this (Jordan's comment)
+    user: User = None,
+    graph_model: BaseModel = KnowledgeGraph,
+    chunker=TextChunker,
+    chunk_size: int = None,
+    config: Config = None,
+    custom_prompt: Optional[str] = None,
+    chunks_per_batch: int = None,
+    **kwargs,
+) -> list[Task]:
+    if config is None:
+        ontology_config = get_ontology_env_config()
+        if (
+            ontology_config.ontology_file_path
+            and ontology_config.ontology_resolver
+            and ontology_config.matching_strategy
+        ):
+            config: Config = {
+                "ontology_config": {
+                    "ontology_resolver": get_ontology_resolver_from_env(**ontology_config.to_dict())
+                }
+            }
+        else:
+            config: Config = {
+                "ontology_config": {"ontology_resolver": get_default_ontology_resolver()}
+            }
+
+    cognify_config = get_cognify_config()
+    embed_triplets = cognify_config.triplet_embedding
+
+    if chunks_per_batch is None:
+        chunks_per_batch = (
+            cognify_config.chunks_per_batch if cognify_config.chunks_per_batch is not None else 100
+        )
+
+    default_tasks = [
+        # EXTRACT: classify raw Data items into typed Document objects
+        Task(classify_documents),
+        # EXTRACT: split Documents into semantic text chunks
+        Task(
+            extract_chunks_from_documents,
+            max_chunk_size=chunk_size or await get_max_chunk_tokens(),
+            chunker=chunker,
+        ),
+        # COGNIFY: LLM-extract entities and relationships into a knowledge graph
+        # COGNIFY: LLM-summarize each chunk for retrieval
+        Task(
+            extract_graph_and_summarize,
+            graph_model=graph_model,
+            config=config,
+            custom_prompt=custom_prompt,
+            task_config={"batch_size": chunks_per_batch},
+            **kwargs,
+        ),
+        # LOAD: persist nodes, edges, and embeddings to graph/vector DBs
+        Task(
+            add_data_points,
+            embed_triplets=embed_triplets,
+            task_config={"batch_size": chunks_per_batch},
+        ),
+        Task(extract_dlt_fk_edges),
+    ]
+
+    return default_tasks
+
+
+async def get_temporal_tasks(
+    user: User = None, chunker=TextChunker, chunk_size: int = None, chunks_per_batch: int = None
+) -> list[Task]:
+    """
+    Builds and returns a list of temporal processing tasks to be executed in sequence.
+
+    The pipeline includes:
+    1. Document classification.
+    2. Document chunking with a specified or default chunk size.
+    3. Event and timestamp extraction from chunks.
+    4. Knowledge graph extraction from events.
+    5. Batched insertion of data points.
+
+    Args:
+        user (User, optional): The user requesting task execution.
+        chunker (Callable, optional): A text chunking function/class to split documents. Defaults to TextChunker.
+        chunk_size (int, optional): Maximum token size per chunk. If not provided, uses system default.
+        chunks_per_batch (int, optional): Number of chunks to process in a single batch in Cognify
+
+    Returns:
+        list[Task]: A list of Task objects representing the temporal processing pipeline.
+    """
+    if chunks_per_batch is None:
+        from xinggraph.modules.cognify.config import get_cognify_config
+
+        configured = get_cognify_config().chunks_per_batch
+        chunks_per_batch = configured if configured is not None else 10
+
+    temporal_tasks = [
+        # EXTRACT: classify raw Data items into typed Document objects
+        Task(classify_documents),
+        # EXTRACT: split Documents into semantic text chunks
+        Task(
+            extract_chunks_from_documents,
+            max_chunk_size=chunk_size or await get_max_chunk_tokens(),
+            chunker=chunker,
+        ),
+        # COGNIFY: extract temporal events and timestamps from chunks
+        Task(extract_events_and_timestamps, task_config={"batch_size": chunks_per_batch}),
+        # COGNIFY: build knowledge graph from extracted events
+        Task(extract_knowledge_graph_from_events),
+        # LOAD: persist nodes, edges, and embeddings to graph/vector DBs
+        Task(add_data_points, task_config={"batch_size": chunks_per_batch}),
+    ]
+
+    return temporal_tasks

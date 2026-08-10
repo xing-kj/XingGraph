@@ -1,0 +1,69 @@
+[project]
+name = "xinggraph-mcp"
+version = "0.5.4"
+description = "XingGraph MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    # For local xinggraph repo usage remove comment below and add absolute path to xinggraph. Then run `uv sync --reinstall` in the mcp folder on local xinggraph changes.
+    "xinggraph[postgres-binary,docs,neo4j] @ file:../",
+    "mcp>=1.12.0,<2.0.0",
+    "uv>=0.6.3,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
+]
+
+authors = [
+    { name = "XingGraph Contributors" },
+]
+
+[build-system]
+requires = [ "hatchling", ]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+# The MCP App workspace bundle is gitignored (built artifact). `artifacts`
+# tells Hatch to include it in wheels when present, without erroring on
+# editable installs where the bundle hasn't been built yet (e.g. e2e CI).
+# The release pipeline runs `npm run build` before `uv build`, so PyPI
+# wheels always carry the bundle.
+artifacts = ["src/app_bundles/**/*"]
+
+[dependency-groups]
+dev = [
+    "debugpy>=1.8.12,<2.0.0",
+    "pytest>=7.4.0,<9",
+    "pytest-asyncio>=0.21.1,<2",
+]
+
+postgres-binary = [
+    "psycopg2-binary>=2.9.10,<3.0.0",
+    "pgvector>=0.3.5,<0.4",
+    "asyncpg>=0.30.0,<1.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+# onnxruntime is pulled in transitively via xinggraph[docs] -> unstructured.
+# 1.24.x dropped cp310 wheels (the MCP CI step uses Python 3.10), and
+# cp314 wheels start at 1.24.1. xinggraph's own pyproject applies the same
+# split inside its [fastembed] extra, but xinggraph-mcp doesn't pull that
+# extra, so we must mirror the constraint here to keep `uv lock --upgrade`
+# from picking a 1.24.x for python<3.14.
+constraint-dependencies = [
+    "onnxruntime<=1.23.2 ; python_version < '3.14'",
+    "onnxruntime>=1.24.1 ; python_version >= '3.14'",
+]
+
+# Note: exclude newer packages that are less than 2 days old
+exclude-newer = "2 days"
+
+[project.scripts]
+xinggraph = "src:main"
+xinggraph-mcp = "src:main_mcp"

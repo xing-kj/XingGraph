@@ -1,0 +1,350 @@
+import os
+import warnings
+from contextvars import ContextVar
+from typing import Optional, Union
+from uuid import UUID
+
+from xinggraph.base_config import get_base_config
+from xinggraph.exceptions import XingGraphValidationError
+from xinggraph.infrastructure.llm.config import LLMConfig
+from xinggraph.infrastructure.databases.vector.embeddings.config import EmbeddingConfig
+from xinggraph.infrastructure.databases.vector.config import (
+    get_vectordb_config,
+    get_vectordb_context_config,
+)
+
+from xinggraph.infrastructure.files.storage.config import file_storage_config
+from xinggraph.modules.users.methods import get_user
+from xinggraph.infrastructure.databases.graph.config import get_graph_config, get_graph_context_config
+from xinggraph.infrastructure.databases.utils.get_or_create_dataset_database import (
+    get_or_create_dataset_database,
+)
+from xinggraph.infrastructure.databases.utils.resolve_dataset_database_connection_info import (
+    resolve_dataset_database_connection_info,
+)
+
+# Note: ContextVar allows us to use different graph db configurations in XingGraph
+#       for different async tasks, threads and processes
+vector_db_config = ContextVar("vector_db_config", default=None)
+graph_db_config = ContextVar("graph_db_config", default=None)
+current_dataset_id = ContextVar("current_dataset_id", default=None)
+# Note: same mechanism for LLM and embedding configs so that the LiteLLM client
+#       and the embedding engine can use per-context (e.g. per-request) configs.
+llm_config: ContextVar[Optional[LLMConfig]] = ContextVar("llm_config", default=None)
+embedding_config = ContextVar("embedding_config", default=None)
+session_user = ContextVar("session_user", default=None)
+# Labels the pipeline stage (extraction | summarization | query) whose LLM
+# config is currently active on `llm_config`, for tracing (see pipeline_stage).
+current_pipeline_stage: ContextVar[Optional[str]] = ContextVar(
+    "current_pipeline_stage", default=None
+)
+
+
+async def set_session_user_context_variable(user):
+    session_user.set(user)
+
+
+def multi_user_support_possible():
+    graph_db_config = get_graph_config()
+    vector_db_config = get_vectordb_config()
+
+    graph_handler = graph_db_config.graph_dataset_database_handler
+    vector_handler = vector_db_config.vector_dataset_database_handler
+    from xinggraph.infrastructure.databases.dataset_database_handler import (
+        supported_dataset_database_handlers,
+    )
+
+    if graph_handler not in supported_dataset_database_handlers:
+        raise EnvironmentError(
+            "Unsupported graph dataset to database handler configured. Cannot add support for multi-user access control mode. Please use a supported graph dataset to database handler or set the environment variables ENABLE_BACKEND_ACCESS_CONTROL to false to switch off multi-user access control mode.\n"
+            f"Selected graph dataset to database handler: {graph_handler}\n"
+            f"Supported dataset to database handlers: {list(supported_dataset_database_handlers.keys())}\n"
+        )
+
+    if vector_handler not in supported_dataset_database_handlers:
+        raise EnvironmentError(
+            "Unsupported vector dataset to database handler configured. Cannot add support for multi-user access control mode. Please use a supported vector dataset to database handler or set the environment variables ENABLE_BACKEND_ACCESS_CONTROL to false to switch off multi-user access control mode.\n"
+            f"Selected vector dataset to database handler: {vector_handler}\n"
+            f"Supported dataset to database handlers: {list(supported_dataset_database_handlers.keys())}\n"
+        )
+
+    if (
+        supported_dataset_database_handlers[graph_handler]["handler_provider"]
+        != graph_db_config.graph_database_provider
+    ):
+        raise EnvironmentError(
+            "The selected graph dataset to database handler does not work with the configured graph database provider. Cannot add support for multi-user access control mode. Please use a supported graph dataset to database handler or set the environment variables ENABLE_BACKEND_ACCESS_CONTROL to false to switch off multi-user access control mode.\n"
+            f"Selected graph database provider: {graph_db_config.graph_database_provider}\n"
+            f"Selected graph dataset to database handler: {graph_handler}\n"
+            f"Supported dataset to database handlers: {list(supported_dataset_database_handlers.keys())}\n"
+        )
+
+    if (
+        supported_dataset_database_handlers[vector_handler]["handler_provider"]
+        != vector_db_config.vector_db_provider
+    ):
+        raise EnvironmentError(
+            "The selected vector dataset to database handler does not work with the configured vector database provider. Cannot add support for multi-user access control mode. Please use a supported vector dataset to database handler or set the environment variables ENABLE_BACKEND_ACCESS_CONTROL to false to switch off multi-user access control mode.\n"
+            f"Selected vector database provider: {vector_db_config.vector_db_provider}\n"
+            f"Selected vector dataset to database handler: {vector_handler}\n"
+            f"Supported dataset to database handlers: {list(supported_dataset_database_handlers.keys())}\n"
+        )
+
+    return True
+
+
+def backend_access_control_enabled():
+    backend_access_control = os.environ.get("ENABLE_BACKEND_ACCESS_CONTROL", None)
+    if backend_access_control is None:
+        # If backend access control is not defined in environment variables,
+        # enable it by default if graph and vector DBs can support it, otherwise disable it
+        return multi_user_support_possible()
+    elif backend_access_control.lower() == "true":
+        # If enabled, ensure that the current graph and vector DBs can support it
+        return multi_user_support_possible()
+    return False
+
+
+VECTOR_DBS_WITH_MULTI_USER_SUPPORT = ["lancedb", "pgvector", "falkor", "qdrant"]
+GRAPH_DBS_WITH_MULTI_USER_SUPPORT = ["ladybug", "kuzu", "falkor", "postgres"]
+
+
+class DatabaseContextManager:
+    """Dual-mode helper returned by :func:`set_database_global_context_variables`.
+
+    Supports both ``await`` (legacy) and ``async with`` (scoped) usage.
+
+    Note: Single-use object, should not be reused across multiple calls.
+    """
+
+    __slots__ = (
+        "_dataset",
+        "_user_id",
+        "_llm_config",
+        "_embedding_config",
+        "_applied",
+        "_dataset_token",
+        "_llm_token",
+        "_embedding_token",
+    )
+
+    def __init__(
+        self,
+        dataset: Union[str, UUID],
+        user_id: UUID,
+        llm_config: Optional[LLMConfig] = None,
+        embedding_config: Optional[EmbeddingConfig] = None,
+    ) -> None:
+        self._dataset = dataset
+        self._user_id = user_id
+        self._llm_config = llm_config
+        self._embedding_config = embedding_config
+        self._applied = False
+        self._dataset_token = None
+        self._llm_token = None
+        self._embedding_token = None
+
+    async def apply_database_context_variables(
+        self, dataset: Union[str, UUID], user_id: UUID
+    ) -> None:
+        self._dataset_token = current_dataset_id.set(str(dataset) if dataset is not None else None)
+
+        # LLM and embedding configs are an explicit, caller-provided override and
+        # are intentionally applied regardless of backend access control: callers
+        # may want per-context LLM/embedding configs even in single-tenant mode.
+        if self._llm_config is not None:
+            self._llm_token = llm_config.set(self._llm_config)
+        if self._embedding_config is not None:
+            self._embedding_token = embedding_config.set(self._embedding_config)
+
+        if not backend_access_control_enabled():
+            return
+
+        # In multi-user mode a dataset is required to resolve the per-dataset
+        # database; fail fast with a clear message instead of a downstream
+        # "user None" lookup error.
+        if dataset is None:
+            raise XingGraphValidationError(
+                "A dataset must be provided when backend access control is enabled."
+            )
+
+        # Imported lazily to avoid circular imports at module load.
+        from xinggraph.infrastructure.databases.dataset_queue import dataset_queue
+
+        await dataset_queue().ensure_slot(dataset)
+
+        user = await get_user(user_id)
+
+        # To ensure permissions are enforced properly all datasets will have their own databases
+        dataset_database = await get_or_create_dataset_database(dataset, user)
+        # Ensure that all connection info is resolved properly
+        dataset_database = await resolve_dataset_database_connection_info(dataset_database)
+
+        base_config = get_base_config()
+        data_root_directory = os.path.join(
+            base_config.data_root_directory, str(user.tenant_id or user.id)
+        )
+        databases_directory_path = os.path.join(
+            base_config.system_root_directory, "databases", str(user.id)
+        )
+
+        # Set vector and graph database configuration based on dataset database information
+        vector_config = {
+            "vector_db_provider": dataset_database.vector_database_provider,
+            "vector_db_url": dataset_database.vector_database_url,
+            "vector_db_key": dataset_database.vector_database_key,
+            "vector_db_name": dataset_database.vector_database_name,
+            "vector_db_port": dataset_database.vector_database_connection_info.get("port", ""),
+            "vector_db_host": dataset_database.vector_database_connection_info.get("host", ""),
+            "vector_db_username": dataset_database.vector_database_connection_info.get(
+                "username", ""
+            ),
+            "vector_db_password": dataset_database.vector_database_connection_info.get(
+                "password", ""
+            ),
+            # Inherit subprocess mode from the global config so that per-dataset DB wrappers
+            # are also spawned as subprocesses when the feature is enabled.
+            "vector_db_subprocess_enabled": get_vectordb_config().vector_db_subprocess_enabled,
+        }
+
+        graph_config = {
+            "graph_database_provider": dataset_database.graph_database_provider,
+            "graph_database_url": dataset_database.graph_database_url,
+            "graph_database_name": dataset_database.graph_database_name,
+            "graph_database_key": dataset_database.graph_database_key,
+            "graph_file_path": os.path.join(
+                databases_directory_path, dataset_database.graph_database_name
+            ),
+            "graph_database_username": dataset_database.graph_database_connection_info.get(
+                "graph_database_username", ""
+            ),
+            "graph_database_password": dataset_database.graph_database_connection_info.get(
+                "graph_database_password", ""
+            ),
+            "graph_database_host": dataset_database.graph_database_connection_info.get(
+                "graph_database_host", ""
+            ),
+            "graph_database_allow_anonymous": dataset_database.graph_database_connection_info.get(
+                "graph_database_allow_anonymous",
+                get_graph_config().graph_database_allow_anonymous,
+            ),
+            "graph_dataset_database_handler": dataset_database.graph_dataset_database_handler,
+            "graph_database_port": dataset_database.graph_database_connection_info.get(
+                "graph_database_port", ""
+            ),
+            # Inherit subprocess mode and Kuzu tuning from the global config so that
+            # per-dataset DB wrappers are spawned with matching settings.
+            "graph_database_subprocess_enabled": get_graph_config().graph_database_subprocess_enabled,
+            "kuzu_num_threads": get_graph_config().kuzu_num_threads,
+            "kuzu_buffer_pool_size": get_graph_config().kuzu_buffer_pool_size,
+            "kuzu_max_db_size": get_graph_config().kuzu_max_db_size,
+        }
+
+        storage_config = {
+            "data_root_directory": data_root_directory,
+        }
+
+        # Use ContextVar to use these graph and vector configurations are used
+        # in the current async context across XingGraph. Unlike the LLM/embedding
+        # overrides these intentionally persist after async-with exit: callers
+        # read the per-dataset databases right after a pipeline run, outside
+        # this context manager.
+        graph_db_config.set(graph_config)
+        vector_db_config.set(vector_config)
+        file_storage_config.set(storage_config)
+
+    async def _apply(self) -> None:
+        if self._applied:
+            return
+        await self.apply_database_context_variables(self._dataset, self._user_id)
+        self._applied = True
+
+    def __await__(self):
+        # Legacy ``await set_database_global_context_variables(...)`` call shape.
+        # Deprecated — emit a warning pointing users at the ``async with`` form,
+        # which scopes the dataset queue slot to a block and releases it on exit.
+        warnings.warn(
+            "`await set_database_global_context_variables(...)` is deprecated. "
+            "Use `async with set_database_global_context_variables(...):` instead "
+            "for scoped dataset-queue slot management; the `async with` form "
+            "releases the database queue slot automatically on block exit, the deprecated method does not.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._apply().__await__()
+
+    async def __aenter__(self) -> "DatabaseContextManager":
+        await self._apply()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        # Restore the caller-provided LLM/embedding overrides and the dataset id
+        # so they don't leak into the surrounding async context. The dataset
+        # graph/vector/file-storage configs are left in place on purpose (see
+        # apply_database_context_variables).
+        for context_var, token_attr in (
+            (embedding_config, "_embedding_token"),
+            (llm_config, "_llm_token"),
+            (current_dataset_id, "_dataset_token"),
+        ):
+            token = getattr(self, token_attr)
+            if token is not None:
+                context_var.reset(token)
+                setattr(self, token_attr, None)
+
+        if not backend_access_control_enabled():
+            return None
+
+        from xinggraph.infrastructure.databases.dataset_queue import dataset_queue
+
+        await dataset_queue().release_slot_for(self._dataset)
+
+
+def set_database_global_context_variables(
+    dataset: Union[str, UUID],
+    user_id: UUID,
+    llm_config: Optional[LLMConfig] = None,
+    embedding_config: Optional[EmbeddingConfig] = None,
+) -> "DatabaseContextManager":
+    """Returns a dual-mode helper that is both awaitable and an async context manager.
+
+    - ``await set_database_global_context_variables(ds, user_id)`` — legacy;
+      applies the context and relies on task-end queue cleanup to release the
+      slot.
+    - ``async with set_database_global_context_variables(ds, user_id):`` —
+      applies the context on enter; explicitly releases this dataset's queue
+      slot on exit. Preferred for sequential multi-dataset loops and scoped
+      operations.
+
+    If backend access control is enabled this ensures all datasets have their
+    own databases, access to which will be enforced by given permissions.
+    Database name will be determined by dataset and the appropriate vector and
+    graph database handlers will be enforced.
+
+    Additionally, this acts as the queue gate for dataset-level operations:
+    applying the context ensures the current asyncio task holds a
+    :class:`DatasetQueue` slot for ``dataset``. Repeated calls in the same
+    task for the same dataset are no-ops;. The dataset queue slot is released automatically when the
+    task completes (legacy mode) or on async-with exit (scoped mode).
+
+    If ``llm_config`` and/or ``embedding_config`` are provided they are set on
+    their respective ContextVars and picked up by ``get_llm_client`` (LiteLLM)
+    and ``get_embedding_engine`` in the current async context. Unlike the
+    graph/vector configs these are applied even when backend access control is
+    disabled, since they are an explicit caller-provided override. In the
+    ``async with`` form they are restored to their prior values on exit, while
+    the per-dataset graph/vector/file-storage configs persist after exit so
+    callers can keep reading the dataset databases.
+
+    Args:
+        dataset: XingGraph dataset name or id
+        user_id: UUID of the owner of the dataset
+        llm_config: Optional ``LLMConfig`` to use for LLM calls in this context.
+        embedding_config: Optional ``EmbeddingConfig`` to use for embedding calls
+            in this context.
+
+    Returns:
+        A :class:`DatabaseContextManager` that can be awaited or used as an
+        async context manager.
+    """
+    return DatabaseContextManager(dataset, user_id, llm_config, embedding_config)

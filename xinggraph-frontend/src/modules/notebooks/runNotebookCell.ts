@@ -1,0 +1,14 @@
+import { Cell } from "@/ui/elements/Notebook/types";
+import { XingGraphInstance } from "@/modules/instances/types";
+
+export default function runNotebookCell(notebookId: string, cell: Cell, instance: XingGraphInstance) {
+  return instance.fetch(`/v1/notebooks/${notebookId}/${cell.id}/run`, {
+    body: JSON.stringify({
+      content: cell.content,
+    }),
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  }).then((response) => response.json());
+}

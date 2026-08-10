@@ -1,0 +1,286 @@
+from uuid import UUID
+from typing import Union, BinaryIO, List, Optional, Any
+
+from xinggraph.modules.users.models import User
+from xinggraph.infrastructure.databases.vector.embeddings.config import EmbeddingConfig
+from xinggraph.infrastructure.llm.config import LLMConfig
+from xinggraph.modules.pipelines import Task, run_pipeline
+from xinggraph.modules.pipelines.layers.resolve_authorized_user_dataset import (
+    resolve_authorized_user_dataset,
+)
+from xinggraph.modules.pipelines.layers.reset_dataset_pipeline_run_status import (
+    reset_dataset_pipeline_run_status,
+)
+from xinggraph.modules.pipelines.layers.pipeline_execution_mode import get_pipeline_executor
+from xinggraph.modules.engine.operations.setup import setup
+from xinggraph.tasks.ingestion import ingest_data, resolve_data_directories
+from xinggraph.tasks.ingestion.data_item import DataItem
+from xinggraph.tasks.ingestion.resolve_dlt_sources import resolve_dlt_sources
+from xinggraph.tasks.ingestion.utils import materialize_stream_for_background
+from xinggraph.shared.logging_utils import get_logger
+
+logger = get_logger()
+
+
+async def add(
+    data: Union[
+        BinaryIO,
+        list[BinaryIO],
+        str,
+        list[str],
+        DataItem,
+        list[DataItem],
+        Any,  # DltResource, SourceFactory, or other dlt types
+    ],
+    dataset_name: str = "main_dataset",
+    user: User = None,
+    node_set: Optional[List[str]] = None,
+    vector_db_config: dict = None,
+    graph_db_config: dict = None,
+    dataset_id: Optional[UUID] = None,
+    preferred_loaders: Optional[List[Union[str, dict[str, dict[str, Any]]]]] = None,
+    incremental_loading: bool = True,
+    data_per_batch: Optional[int] = 20,
+    importance_weight: Optional[float] = 0.5,
+    run_in_background: bool = False,
+    llm_config: Optional[LLMConfig] = None,
+    embedding_config: Optional[EmbeddingConfig] = None,
+    data_cache: bool = True,
+    **kwargs,
+):
+    """
+    Add data to XingGraph for knowledge graph processing.
+
+    This is the first step in the XingGraph workflow - it ingests raw data and prepares it
+    for processing. The function accepts various data formats including text, files, urls and
+    binary streams, then stores them in a specified dataset for further processing.
+
+    Prerequisites:
+        - **LLM_API_KEY**: Must be set in environment variables for content processing
+        - **Database Setup**: Relational and vector databases must be configured
+        - **User Authentication**: Uses default user if none provided (created automatically)
+
+    Supported Input Types:
+        - **Text strings**: Direct text content (str) - any string not starting with "/" or "file://"
+        - **File paths**: Local file paths as strings in these formats:
+            * Absolute paths: "/path/to/document.pdf"
+            * File URLs: "file:///path/to/document.pdf" or "file://relative/path.txt"
+            * S3 paths: "s3://bucket-name/path/to/file.pdf"
+        - **Binary file objects**: File handles/streams (BinaryIO)
+        - **Lists**: Multiple files or text strings in a single call
+
+    Supported File Formats:
+        - Text files (.txt, .md, .csv)
+        - PDFs (.pdf)
+        - Images (.png, .jpg, .jpeg) - extracted via OCR/vision models
+        - Audio files (.mp3, .wav) - transcribed to text
+        - Code files (.py, .js, .ts, etc.) - parsed for structure and content
+        - Office documents (.docx, .pptx)
+
+            Workflow:
+        1. **Data Resolution**: Resolves file paths and validates accessibility
+        2. **Content Extraction**: Extracts text content from various file formats
+        3. **Dataset Storage**: Stores processed content in the specified dataset
+        4. **Metadata Tracking**: Records file metadata, timestamps, and user permissions
+        5. **Permission Assignment**: Grants user read/write/delete/share permissions on dataset
+
+    Args:
+        data: The data to ingest. Can be:
+            - Single text string: "Your text content here"
+            - Absolute file path: "/path/to/document.pdf"
+            - File URL: "file:///absolute/path/to/document.pdf" or "file://relative/path.txt"
+            - S3 path: "s3://my-bucket/documents/file.pdf"
+            - List of mixed types: ["text content", "/path/file.pdf", "file://doc.txt", file_handle]
+            - Binary file object: open("file.txt", "rb")
+            - url: A web link url (https or http)
+        dataset_name: Name of the dataset to store data in. Defaults to "main_dataset".
+                    Create separate datasets to organize different knowledge domains.
+        user: User object for authentication and permissions. Uses default user if None.
+              Default user: "default_user@example.com" (created automatically on first use).
+              Users can only access datasets they have permissions for.
+        node_set: Optional list of node identifiers for graph organization and access control.
+                 Used for grouping related data points in the knowledge graph.
+        vector_db_config: Optional configuration for vector database (for custom setups).
+        graph_db_config: Optional configuration for graph database (for custom setups).
+        dataset_id: Optional specific dataset UUID to use instead of dataset_name.
+        run_in_background: If True, starts ingestion asynchronously and returns immediately.
+                          If False (default), waits for completion before returning.
+        extraction_rules: Optional dictionary of rules (e.g., CSS selectors, XPath) for extracting specific content from web pages using BeautifulSoup
+        tavily_config: Optional configuration for Tavily API, including API key and extraction settings
+        soup_crawler_config: Optional configuration for BeautifulSoup crawler, specifying concurrency, crawl delay, and extraction rules.
+
+    Returns:
+        PipelineRunInfo: Information about the ingestion pipeline execution including:
+            - Pipeline run ID for tracking
+            - Dataset ID where data was stored
+            - Processing status and any errors
+            - Execution timestamps and metadata
+
+    Next Steps:
+        After successfully adding data, call `cognify()` to process the ingested content:
+
+        ```python
+        import xinggraph
+
+        # Step 1: Add your data (text content or file path)
+        await xinggraph.add("Your document content")  # Raw text
+        # OR
+        await xinggraph.add("/path/to/your/file.pdf")  # File path
+
+        # Step 2: Process into knowledge graph
+        await xinggraph.cognify()
+
+        # Step 3: Search and query
+        results = await xinggraph.search("What insights can you find?")
+        ```
+
+    Example Usage:
+        ```python
+        # Add a single text document
+        await xinggraph.add("Natural language processing is a field of AI...")
+
+        # Add multiple files with different path formats
+        await xinggraph.add([
+            "/absolute/path/to/research_paper.pdf",        # Absolute path
+            "file://relative/path/to/dataset.csv",         # Relative file URL
+            "file:///absolute/path/to/report.docx",        # Absolute file URL
+            "s3://my-bucket/documents/data.json",           # S3 path
+            "Additional context text"                       # Raw text content
+        ])
+
+        # Add to a specific dataset
+        await xinggraph.add(
+            data="Project documentation content",
+            dataset_name="project_docs"
+        )
+
+        # Add a single file
+        await xinggraph.add("/home/user/documents/analysis.pdf")
+
+        # Add a single url and bs4 extract ingestion method
+        extraction_rules = {
+            "title": "h1",
+            "description": "p",
+            "more_info": "a[href*='more-info']"
+        }
+        await xinggraph.add("https://example.com",extraction_rules=extraction_rules)
+
+        # Add a single url and tavily extract ingestion method
+        Make sure to set TAVILY_API_KEY = YOUR_TAVILY_API_KEY as a environment variable
+        await xinggraph.add("https://example.com")
+
+        # Add multiple urls
+        await xinggraph.add(["https://example.com","https://books.toscrape.com"])
+        ```
+
+    Environment Variables:
+        Required:
+        - LLM_API_KEY: API key for your LLM provider (OpenAI, Anthropic, etc.)
+
+        Optional:
+        - LLM_PROVIDER: "openai" (default), "anthropic", "gemini", "ollama", "mistral", "bedrock"
+        - LLM_MODEL: Model name (default: "gpt-5-mini")
+        - DEFAULT_USER_EMAIL: Custom default user email
+        - DEFAULT_USER_PASSWORD: Custom default user password
+        - VECTOR_DB_PROVIDER: "lancedb" (default), "pgvector"
+        - GRAPH_DATABASE_PROVIDER: "ladybug" (default), "neo4j"
+        - TAVILY_API_KEY: YOUR_TAVILY_API_KEY
+
+    """
+    # Route to remote instance if connected via serve()
+    from xinggraph.api.v1.serve.state import get_remote_client
+
+    client = get_remote_client()
+    if client is not None:
+        result = await client.add(data, dataset_name)
+        # Wrap in a simple namespace so callers expecting .model_dump() still work
+        from types import SimpleNamespace
+
+        return SimpleNamespace(**result)
+
+    if preferred_loaders is not None:
+        transformed = {}
+        for item in preferred_loaders:
+            if isinstance(item, dict):
+                transformed.update(item)
+            else:
+                transformed[item] = {}
+        preferred_loaders = transformed
+
+    tasks = [
+        Task(resolve_data_directories, include_subdirectories=True),
+        Task(
+            ingest_data,
+            dataset_name,
+            user,
+            node_set,
+            dataset_id,
+            preferred_loaders,
+            importance_weight,
+        ),
+    ]
+
+    await setup()
+
+    user, authorized_dataset = await resolve_authorized_user_dataset(
+        dataset_name=dataset_name, dataset_id=dataset_id, user=user
+    )
+
+    # Expand DLT resources (and auto-detected CSV/connection strings) into
+    # standard DataItems before the pipeline sees them. orphan_cleanup (when
+    # not None) deletes dlt rows no longer present in the source; it is
+    # deferred until after the fresh rows are committed to avoid a data-loss
+    # window on a mid-ingest failure.
+    data, orphan_cleanup = await resolve_dlt_sources(
+        data,
+        dataset_name=dataset_name,
+        user=user,
+        **kwargs,
+    )
+
+    # Background runs must not depend on caller/request-scoped stream lifetimes.
+    # Materialize stream-like inputs into owned in-memory buffers up front.
+    if run_in_background:
+        # Detached pipelines run one-at-a-time (to avoid DB write conflicts)
+        # and commit later, so we cannot safely defer cleanup past their commit
+        # from here without racing them. Run it up front instead.
+        if orphan_cleanup is not None:
+            await orphan_cleanup()
+            orphan_cleanup = None
+        data = await materialize_stream_for_background(data)
+
+    await reset_dataset_pipeline_run_status(
+        authorized_dataset.id, user, pipeline_names=["add_pipeline", "cognify_pipeline"]
+    )
+
+    pipeline_executor_func = get_pipeline_executor(run_in_background=run_in_background)
+
+    result = await pipeline_executor_func(
+        pipeline=run_pipeline,
+        tasks=tasks,
+        datasets=[authorized_dataset.id],
+        data=data,
+        user=user,
+        pipeline_name="add_pipeline",
+        vector_db_config=vector_db_config,
+        graph_db_config=graph_db_config,
+        use_pipeline_cache=False,
+        incremental_loading=incremental_loading,
+        data_per_batch=data_per_batch,
+        llm_config=llm_config,
+        embedding_config=embedding_config,
+        data_cache=data_cache,
+    )
+
+    # Foreground runs: the fresh rows are committed by pipeline_executor_func
+    # above, so it's now safe to clean up orphans. (Background runs already ran
+    # this up front and set orphan_cleanup to None.)
+    if orphan_cleanup is not None:
+        await orphan_cleanup()
+
+    # run_pipeline_blocking returns {dataset_id: PipelineRunInfo} but callers
+    # expect a single PipelineRunInfo (add always processes one dataset).
+    if isinstance(result, dict) and len(result) == 1:
+        return next(iter(result.values()))
+
+    return result

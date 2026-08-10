@@ -1,0 +1,29 @@
+Audi
+Audi is known for its modern designs and advanced technology. Its lineup includes the Audi e‑tron, a fully electric SUV, and the Audi R8, a high‑performance sports car. The Audi A8 represents the brand’s luxury sedan offering. Audi has also announced the Audi Q6 e‑tron, an upcoming electric SUV.
+
+BMW
+BMW focuses on performance and driving pleasure. Notable models are the BMW iX, an electric SAV, the BMW M4 coupe, and the BMW 7 Series luxury sedan. The BMW M3 is another high‑performance sedan in its range. An upcoming concept called BMW X8 is also mentioned.
+
+Mercedes‑Benz
+Mercedes‑Benz is synonymous with luxury. Key products include the Mercedes S‑Class, the electric Mercedes EQS, and the Mercedes‑AMG GT sports car. The Mercedes GLC is a popular SUV. In addition, Mercedes has introduced the EQB, a compact electric SUV.
+
+Porsche
+Porsche stands for high‑performance. The iconic Porsche 911, the electric Porsche Taycan, and the Porsche Cayenne SUV are part of its range. The Porsche Panamera is also produced. Porsche recently confirmed the all‑electric Macan EV.
+
+Volkswagen
+Volkswagen, the “people’s car”, produces the classic VW Golf, the electric VW ID.4, and the VW Touareg SUV. The VW Polo is another best‑seller. Volkswagen is also launching the ID. Buzz, an electric microbus.
+
+Apple
+Apple is a technology company known for its innovative consumer electronics and software. It develops the iPhone, iPad, MacBook, and Apple Watch. Apple's products are widely used around the world.
+
+Google
+Google started as a search engine and expanded into cloud computing and AI. It develops the Google Search engine, the Android operating system, Google Cloud services, and Google Pixel devices.
+
+Microsoft
+Microsoft is dominant in software, cloud computing, and gaming. It develops the Windows operating system, the Azure cloud platform, the Surface line of devices, and the Xbox gaming console.
+
+Amazon
+Amazon began as an online bookstore and grew into an e‑commerce and cloud computing giant. Through its technology arm, it develops the Kindle e‑reader, Amazon Echo smart speakers, the Amazon Prime streaming service, and AWS cloud services.
+
+Meta
+Meta is a technology company pioneering social media and virtual reality technology. It develops Facebook, Instagram, WhatsApp, and the Oculus virtual reality platform.

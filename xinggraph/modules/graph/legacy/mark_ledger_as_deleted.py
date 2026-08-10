@@ -1,0 +1,81 @@
+from uuid import UUID
+from datetime import datetime, timezone
+from typing import List
+
+from sqlalchemy import and_, or_, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from xinggraph.infrastructure.databases.relational import with_async_session
+from .GraphRelationshipLedger import GraphRelationshipLedger
+
+BATCH_SIZE = 1000
+
+
+@with_async_session
+async def mark_ledger_nodes_as_deleted(node_slugs: List[UUID], session: AsyncSession) -> None:
+    """Mark legacy ledger entries as deleted for the given node IDs.
+
+    When non-legacy nodes are deleted from graph/vector DBs, their corresponding
+    ledger entries (if any) should be marked as deleted so they are excluded from
+    future legacy checks.
+    """
+    if not node_slugs:
+        return
+
+    deleted_at = datetime.now(timezone.utc)
+    for start_index in range(0, len(node_slugs), BATCH_SIZE):
+        node_slug_batch = node_slugs[start_index : start_index + BATCH_SIZE]
+        stmt = (
+            update(GraphRelationshipLedger)
+            .where(
+                and_(
+                    GraphRelationshipLedger.deleted_at.is_(None),
+                    GraphRelationshipLedger.source_node_id.in_(node_slug_batch),
+                    GraphRelationshipLedger.source_node_id
+                    == GraphRelationshipLedger.destination_node_id,
+                )
+            )
+            .values(deleted_at=deleted_at)
+        )
+        await session.execute(stmt)
+    await session.commit()
+
+
+@with_async_session
+async def mark_ledger_edges_as_deleted(
+    edge_relationship_names: List[str], session: AsyncSession
+) -> None:
+    """Mark legacy ledger edge entries as deleted for the given relationship names.
+
+    When non-legacy edges are deleted from graph/vector DBs, their corresponding
+    ledger entries (if any) should be marked as deleted so they are excluded from
+    future legacy checks.
+    """
+    if not edge_relationship_names:
+        return
+
+    relationship_names = list(set(edge_relationship_names))
+    batch_size = 250
+    deleted_at = datetime.now(timezone.utc)
+
+    for start_index in range(0, len(relationship_names), batch_size):
+        relationship_batch = relationship_names[start_index : start_index + batch_size]
+        stmt = (
+            update(GraphRelationshipLedger)
+            .where(
+                and_(
+                    GraphRelationshipLedger.deleted_at.is_(None),
+                    GraphRelationshipLedger.node_label.is_(None),
+                    or_(
+                        *[
+                            GraphRelationshipLedger.creator_function.ilike(f"%{name}")
+                            for name in relationship_batch
+                        ]
+                    ),
+                )
+            )
+            .values(deleted_at=deleted_at)
+        )
+        await session.execute(stmt)
+
+    await session.commit()

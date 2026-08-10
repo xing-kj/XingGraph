@@ -1,0 +1,197 @@
+"""Adapter from retriever payloads to the normalized SearchResponse.
+
+Retrievers produce heterogeneous payloads (strings, chunk dicts, graph
+rows, edge lists). This module flattens them into a uniform list of
+``SearchResultItem`` so every call to ``xinggraph.search`` returns the
+same wire shape regardless of search type.
+"""
+
+import json
+from typing import Any, Optional
+
+from pydantic import BaseModel
+
+from xinggraph.modules.recall.types.SearchResultItem import (
+    SearchResultItem,
+    SearchResultKind,
+)
+from xinggraph.modules.search.models.SearchResultPayload import SearchResultPayload
+from xinggraph.modules.search.types import SearchType
+
+_KIND_BY_SEARCH_TYPE: dict[SearchType, SearchResultKind] = {
+    SearchType.GRAPH_COMPLETION: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.GRAPH_COMPLETION_COT: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.GRAPH_COMPLETION_DECOMPOSITION: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.GRAPH_COMPLETION_CONTEXT_EXTENSION: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.GRAPH_SUMMARY_COMPLETION: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.HYBRID_COMPLETION: SearchResultKind.GRAPH_COMPLETION,
+    SearchType.RAG_COMPLETION: SearchResultKind.RAG_COMPLETION,
+    SearchType.TRIPLET_COMPLETION: SearchResultKind.TRIPLET_COMPLETION,
+    SearchType.CYPHER: SearchResultKind.CYPHER,
+    SearchType.NATURAL_LANGUAGE: SearchResultKind.NATURAL_LANGUAGE,
+    SearchType.TEMPORAL: SearchResultKind.TEMPORAL,
+    SearchType.CODING_RULES: SearchResultKind.CODING_RULE,
+    SearchType.CHUNKS: SearchResultKind.CHUNK,
+    SearchType.CHUNKS_LEXICAL: SearchResultKind.CHUNK,
+    SearchType.SUMMARIES: SearchResultKind.SUMMARY,
+}
+
+
+def _coerce_to_dict(value: Any) -> dict:
+    """Best-effort coerce any object to a dict for the ``raw`` field."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if hasattr(value, "__dict__"):
+        try:
+            return {k: v for k, v in vars(value).items() if not k.startswith("_")}
+        except TypeError:
+            pass
+    return {
+        "value": value if isinstance(value, (int, float, bool, str, type(None))) else str(value)
+    }
+
+
+def _text_from_dict(payload: dict) -> str:
+    """Pick the most human-readable text field from a dict payload."""
+    for key in ("text", "completion", "summary", "name", "content", "answer"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    try:
+        return json.dumps(payload, default=str, ensure_ascii=True)
+    except (TypeError, ValueError):
+        return str(payload)
+
+
+def _score_from(value: Any) -> Optional[float]:
+    if isinstance(value, dict):
+        score = value.get("score")
+        if isinstance(score, (int, float)):
+            return float(score)
+    return None
+
+
+def _provenance_metadata(raw: dict) -> dict:
+    """Surface stable source identifiers from a chunk/summary payload.
+
+    Lets callers map a result back to the data they ingested and inspect the
+    cited chunk. ``document_id`` is the ingested Data item's id (cognify sets
+    ``Document.id = data.id``), exposed here as ``data_id``; ``id`` is the
+    chunk's own node id. Only keys actually present are included.
+    """
+    metadata: dict[str, Any] = {}
+    data_id = raw.get("document_id")
+    if data_id is not None:
+        metadata["data_id"] = str(data_id)
+    chunk_id = raw.get("id")
+    if chunk_id is not None:
+        metadata["chunk_id"] = str(chunk_id)
+    chunk_index = raw.get("chunk_index")
+    if isinstance(chunk_index, int) and not isinstance(chunk_index, bool):
+        metadata["chunk_index"] = chunk_index
+    document_name = raw.get("document_name")
+    if document_name is not None:
+        metadata["document_name"] = str(document_name)
+    return metadata
+
+
+def _build_item(
+    entry: Any,
+    payload: SearchResultPayload,
+    kind: SearchResultKind,
+) -> SearchResultItem:
+    """Build a single SearchResultItem from one retriever output element."""
+    if isinstance(entry, str):
+        text = entry
+        raw: dict = {"value": entry}
+    elif isinstance(entry, BaseModel):
+        raw = entry.model_dump(mode="json")
+        text = _text_from_dict(raw)
+    elif isinstance(entry, dict):
+        raw = entry
+        text = _text_from_dict(entry)
+    elif isinstance(entry, (list, tuple)):
+        raw = {"value": [_coerce_to_dict(item) for item in entry]}
+        text = json.dumps(raw["value"], default=str, ensure_ascii=True)
+    else:
+        raw = _coerce_to_dict(entry)
+        text = _text_from_dict(raw) if raw else str(entry)
+
+    return SearchResultItem(
+        kind=kind,
+        search_type=payload.search_type,
+        text=text,
+        score=_score_from(entry),
+        dataset_id=str(payload.dataset_id) if payload.dataset_id else None,
+        dataset_name=payload.dataset_name,
+        metadata=_provenance_metadata(raw),
+        raw=raw,
+        context=_context_text(payload.context),
+        trace=_trace_dict(payload.trace),
+        clarification_request=payload.clarification_request,
+    )
+
+
+def _context_text(context: Any) -> Optional[str]:
+    """Best-effort coerce the payload context to a single displayable string."""
+    if context is None:
+        return None
+    if isinstance(context, str):
+        return context if context else None
+    if isinstance(context, list):
+        return "\n\n".join(str(item) for item in context) or None
+    return str(context) or None
+
+
+def _trace_dict(trace: Any) -> Optional[dict]:
+    """Coerce a retriever trace into a JSON-safe dict (drop huge wiki lists)."""
+    if not trace or not isinstance(trace, dict):
+        return None
+    safe: dict[str, Any] = {}
+    for key, value in trace.items():
+        if key == "context" and isinstance(value, str) and len(value) > 20000:
+            safe[key] = value[:20000]
+        elif isinstance(value, (str, int, float, bool, type(None))):
+            safe[key] = value
+        elif isinstance(value, dict):
+            try:
+                json.dumps(value)
+                safe[key] = value
+            except (TypeError, ValueError):
+                safe[key] = str(value)
+        elif isinstance(value, list):
+            try:
+                json.dumps(value)
+                safe[key] = value
+            except (TypeError, ValueError):
+                safe[key] = [str(item) for item in value]
+        else:
+            safe[key] = str(value)
+    return safe
+
+
+def _flatten(value: Any) -> list[Any]:
+    """Return a flat list of entries from completion/context/result_object."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def normalize_search_payload(payload: SearchResultPayload) -> list[SearchResultItem]:
+    """Normalize one dataset's retriever payload into SearchResultItems."""
+    kind = _KIND_BY_SEARCH_TYPE.get(payload.search_type, SearchResultKind.UNKNOWN)
+
+    if payload.only_context:
+        entries = _flatten(payload.context)
+    elif payload.completion is not None:
+        entries = _flatten(payload.completion)
+    elif payload.context is not None:
+        entries = _flatten(payload.context)
+    else:
+        entries = _flatten(payload.result_object)
+
+    return [_build_item(entry, payload, kind) for entry in entries]

@@ -1,0 +1,287 @@
+import asyncio
+import logging
+
+from xinggraph.shared.logging_utils import get_logger
+from typing import List, Optional
+import numpy as np
+import math
+import re
+from tenacity import (
+    retry,
+    stop_after_delay,
+    wait_exponential_jitter,
+    retry_if_not_exception_type,
+    before_sleep_log,
+)
+import litellm
+import os
+from urllib.parse import urlparse
+import httpx
+from xinggraph.infrastructure.databases.vector.embeddings.EmbeddingEngine import EmbeddingEngine
+from xinggraph.infrastructure.databases.exceptions import EmbeddingException
+
+from xinggraph.infrastructure.llm.tokenizer.resolver import resolve_embedding_tokenizer
+from xinggraph.shared.rate_limiting import embedding_rate_limiter_context_manager
+from xinggraph.infrastructure.databases.vector.embeddings.utils import (
+    sanitize_embedding_text_inputs,
+    handle_embedding_response,
+)
+
+litellm.set_verbose = False
+logger = get_logger("LiteLLMEmbeddingEngine")
+
+# Over-length embedding input: litellm maps chat "context length" 400s to
+# ContextWindowExceededError, but the embeddings API returns a plain
+# BadRequestError (e.g. OpenAI 400 "maximum input length is 8192 tokens"). Match
+# those by message so the split/pool recovery below can handle them too. Kept
+# narrow to length/token-limit phrasings so genuinely-bad requests still fail fast.
+_EMBED_LENGTH_ERROR_RE = re.compile(r"maximum\s+input\s+length", re.IGNORECASE)
+
+
+class LiteLLMEmbeddingEngine(EmbeddingEngine):
+    """
+    Engine for embedding text using a specific LLM model, supporting mock and actual
+    embedding calls.
+
+    Public methods:
+    - embed_text: Embed a list of strings into vector representations.
+    - get_vector_size: Retrieve the size of the embedding vectors.
+    - get_tokenizer: Load the appropriate tokenizer for the specified model.
+    """
+
+    api_key: str
+    endpoint: str
+    api_version: str
+    provider: str
+    model: str
+    dimensions: int
+    mock: bool
+
+    MAX_RETRIES = 5
+
+    def __init__(
+        self,
+        model: Optional[str] = "openai/text-embedding-3-large",
+        provider: str = "openai",
+        dimensions: Optional[int] = 3072,
+        api_key: str = None,
+        endpoint: str = None,
+        api_version: str = None,
+        max_completion_tokens: int = 512,
+        batch_size: int = 100,
+    ):
+        self.api_key = api_key
+        self.endpoint = endpoint
+        self.api_version = api_version
+        self.provider = provider
+        self.model = model
+        self.dimensions = dimensions
+        self.max_completion_tokens = max_completion_tokens
+        self.tokenizer = self.get_tokenizer()
+        self.retry_count = 0
+        self.batch_size = batch_size
+
+        enable_mocking = os.getenv("MOCK_EMBEDDING", "false")
+        if isinstance(enable_mocking, bool):
+            enable_mocking = str(enable_mocking).lower()
+        self.mock = enable_mocking in ("true", "1", "yes")
+
+        # Validate provided custom embedding endpoint early to avoid long hangs later
+        if self.endpoint:
+            try:
+                parsed = urlparse(self.endpoint)
+            except Exception:
+                parsed = None
+            if not parsed or parsed.scheme not in ("http", "https") or not parsed.netloc:
+                logger.error(
+                    "Invalid EMBEDDING_ENDPOINT configured: '%s'. Expected a URL starting with http:// or https://",
+                    str(self.endpoint),
+                )
+                raise EmbeddingException(
+                    "Invalid EMBEDDING_ENDPOINT. Please set a valid URL (e.g., https://host:port) "
+                    "via environment variable EMBEDDING_ENDPOINT."
+                )
+
+    @retry(
+        stop=stop_after_delay(128),
+        wait=wait_exponential_jitter(2, 128),
+        retry=retry_if_not_exception_type(
+            (litellm.exceptions.NotFoundError, asyncio.CancelledError)
+        ),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def embed_text(self, text: List[str]) -> List[List[float]]:
+        """
+        Embed a list of text strings into vector representations.
+
+        If the input exceeds the model's context window, the method will recursively split the
+        input and combine the results. It handles both mock and live embedding scenarios,
+        logging errors for any encountered exceptions, and raising specific exceptions for
+        context window issues and embedding failures.
+
+        Parameters:
+        -----------
+
+            - text (List[str]): A list of strings to be embedded.
+
+        Returns:
+        --------
+
+            - List[List[float]]: A list of vectors representing the embedded texts.
+        """
+
+        sanitized_text_input = sanitize_embedding_text_inputs(text)
+
+        try:
+            if self.mock:
+                response = {
+                    "data": [{"embedding": [0.0] * self.dimensions} for _ in sanitized_text_input]
+                }
+                return [data["embedding"] for data in response["data"]]
+            else:
+                async with embedding_rate_limiter_context_manager():
+                    embedding_kwargs = {
+                        "model": self.model,
+                        "input": sanitized_text_input,
+                        "api_key": self.api_key,
+                        "api_base": self.endpoint,
+                        "api_version": self.api_version,
+                    }
+                    # Pass through target embedding dimensions when supported
+                    if self.dimensions is not None:
+                        embedding_kwargs["dimensions"] = self.dimensions
+
+                    # Ensure each attempt does not hang indefinitely
+                    response = await asyncio.wait_for(
+                        litellm.aembedding(**embedding_kwargs),
+                        timeout=30.0,
+                    )
+
+                embedding_response = [data["embedding"] for data in response.data]
+                return handle_embedding_response(text, embedding_response, self.dimensions)
+
+        except litellm.exceptions.BadRequestError as error:
+            # ContextWindowExceededError subclasses BadRequestError. litellm raises
+            # it for chat context-length errors, but the embeddings API returns a
+            # plain BadRequestError for over-length input (OpenAI 400: "maximum input
+            # length is 8192 tokens"). Recover (split + pool) for both; re-raise any
+            # other BadRequest unchanged so genuinely bad requests still fail fast.
+            if not (
+                isinstance(error, litellm.exceptions.ContextWindowExceededError)
+                or _EMBED_LENGTH_ERROR_RE.search(str(error))
+            ):
+                raise
+            if isinstance(text, list) and len(text) > 1:
+                mid = math.ceil(len(text) / 2)
+                left, right = text[:mid], text[mid:]
+                left_vecs, right_vecs = await asyncio.gather(
+                    self.embed_text(left),
+                    self.embed_text(right),
+                )
+                return left_vecs + right_vecs
+
+                # If caller passed ONE oversize string split the string itself into
+                # half so we can process it
+            if isinstance(text, list) and len(text) == 1:
+                logger.debug(f"Pooling embeddings of text string with size: {len(text[0])}")
+                s = text[0]
+                third = len(s) // 3
+                # We are using thirds to intentionally have overlap between split parts
+                # for better embedding calculation
+                left_part, right_part = s[: third * 2], s[third:]
+
+                # Recursively embed the split parts in parallel
+                (left_vec,), (right_vec,) = await asyncio.gather(
+                    self.embed_text([left_part]),
+                    self.embed_text([right_part]),
+                )
+
+                # POOL the two embeddings into one
+                pooled = (np.array(left_vec) + np.array(right_vec)) / 2
+                return [pooled.tolist()]
+
+            logger.error("Embedding input exceeds the model's max length: %s", str(error))
+            raise error
+
+        except asyncio.TimeoutError as e:
+            # Per-attempt timeout – likely an unreachable endpoint
+            logger.error(
+                "Embedding endpoint timed out. EMBEDDING_ENDPOINT='%s'. "
+                "Verify that the endpoint is reachable and correct.",
+                str(self.endpoint),
+            )
+            raise EmbeddingException(
+                "Embedding request timed out. Check EMBEDDING_ENDPOINT connectivity."
+            ) from e
+
+        except (httpx.ConnectError, httpx.ReadTimeout) as e:
+            logger.error(
+                "Failed to connect to embedding endpoint. EMBEDDING_ENDPOINT='%s'. "
+                "Ensure the URL is correct and the server is running.",
+                str(self.endpoint),
+            )
+            raise EmbeddingException(
+                "Cannot connect to embedding endpoint. Check EMBEDDING_ENDPOINT."
+            ) from e
+
+        except (
+            litellm.exceptions.BadRequestError,
+            litellm.exceptions.NotFoundError,
+        ) as e:
+            logger.error(f"Embedding error with model {self.model}: {str(e)}")
+            raise EmbeddingException(f"Failed to index data points using model {self.model}") from e
+
+        except Exception as error:
+            # Fall back to a clear, actionable message for connectivity/misconfiguration issues
+            logger.error(
+                "Error embedding text: %s. EMBEDDING_ENDPOINT='%s'.",
+                str(error),
+                str(self.endpoint),
+            )
+            raise EmbeddingException(
+                "Embedding failed due to an unexpected error. Verify EMBEDDING_ENDPOINT and provider settings."
+            ) from error
+
+    def get_vector_size(self) -> int:
+        """
+        Retrieve the dimensionality of the embedding vectors.
+
+        Returns:
+        --------
+
+            - int: The size (dimensionality) of the embedding vectors.
+        """
+        return self.dimensions
+
+    def get_batch_size(self) -> int:
+        """
+        Return the desired batch size for embedding calls
+
+        Returns:
+
+        """
+        return self.batch_size
+
+    def get_tokenizer(self):
+        """
+        Load and return the appropriate tokenizer for the specified model based on the provider.
+
+        Delegates to :func:`resolve_embedding_tokenizer` so the model to tokenizer
+        mapping (and mismatch warnings) live in one place (issue #3646).
+
+        Returns:
+        --------
+
+            The tokenizer instance compatible with the model.
+        """
+        logger.debug(f"Loading tokenizer for model {self.model}...")
+        # Strip the vLLM routing prefix so the bare HuggingFace repo is resolvable.
+        model = self.model.replace("hosted_vllm/", "")
+        tokenizer = resolve_embedding_tokenizer(
+            provider=self.provider,
+            model=model,
+            max_completion_tokens=self.max_completion_tokens,
+        )
+        logger.debug(f"Tokenizer loaded for model: {self.model}")
+        return tokenizer

@@ -1,0 +1,68 @@
+from uuid import UUID
+from typing import List, Tuple
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from xinggraph.infrastructure.databases.graph import get_graph_engine
+from xinggraph.infrastructure.databases.relational import with_async_session
+from xinggraph.context_global_variables import backend_access_control_enabled
+from xinggraph.modules.graph.models import Node
+from .GraphRelationshipLedger import GraphRelationshipLedger
+
+BATCH_SIZE = 1000
+
+
+@with_async_session
+async def has_nodes_in_legacy_ledger(nodes: List[Node], session: AsyncSession):
+    node_ids = [node.slug for node in nodes]
+
+    legacy_nodes = []
+    for start_index in range(0, len(node_ids), BATCH_SIZE):
+        node_id_batch = node_ids[start_index : start_index + BATCH_SIZE]
+        query = (
+            select(
+                GraphRelationshipLedger.node_label,
+                GraphRelationshipLedger.source_node_id,
+            )
+            .where(
+                and_(
+                    GraphRelationshipLedger.node_label.is_not(None),
+                    GraphRelationshipLedger.deleted_at.is_(None),
+                    GraphRelationshipLedger.source_node_id.in_(node_id_batch),
+                    GraphRelationshipLedger.source_node_id
+                    == GraphRelationshipLedger.destination_node_id,
+                )
+            )
+            .distinct()
+        )
+
+        legacy_nodes.extend((await session.execute(query)).all())
+
+    if len(legacy_nodes) == 0:
+        return [False for __ in nodes]
+
+    if backend_access_control_enabled():
+        confirmed_nodes = await confirm_nodes_in_graph(legacy_nodes)
+        return [node_id in confirmed_nodes for node_id in node_ids]
+    else:
+        found_ids = set()
+        for __, node_id in legacy_nodes:
+            found_ids.add(node_id)
+
+        return [node_id in found_ids for node_id in node_ids]
+
+
+async def confirm_nodes_in_graph(
+    legacy_nodes: List[Tuple[str, UUID]],
+):
+    graph_engine = await get_graph_engine()
+
+    graph_nodes = await graph_engine.get_nodes([str(node[1]) for node in legacy_nodes])
+    graph_nodes_by_id = {node["id"]: node for node in graph_nodes}
+
+    confirmed_nodes = set()
+    for __, node_id in legacy_nodes:
+        if str(node_id) in graph_nodes_by_id:
+            confirmed_nodes.add(node_id)
+
+    return confirmed_nodes

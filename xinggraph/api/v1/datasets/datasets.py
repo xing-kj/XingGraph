@@ -1,0 +1,207 @@
+import asyncio
+from uuid import UUID
+from typing import Optional
+
+from xinggraph.context_global_variables import set_database_global_context_variables
+from xinggraph.modules.users.models import User
+from xinggraph.modules.users.methods import get_default_user
+from xinggraph.modules.users.exceptions import PermissionDeniedError
+from xinggraph.modules.data.methods import get_dataset_data, has_dataset_data
+from xinggraph.modules.data.methods import get_authorized_dataset, get_authorized_existing_datasets
+from xinggraph.modules.data.exceptions.exceptions import UnauthorizedDataAccessError
+from xinggraph.modules.graph.methods import (
+    delete_data_nodes_and_edges,
+    delete_dataset_nodes_and_edges,
+    has_data_related_nodes,
+    legacy_delete,
+    try_delete_data_by_graph_provenance,
+)
+from xinggraph.modules.ingestion import discover_directory_datasets
+from xinggraph.modules.pipelines.operations.get_pipeline_status import get_pipeline_status
+from xinggraph.shared.logging_utils import get_logger
+
+logger = get_logger()
+
+
+class datasets:
+    """
+    Dataset management namespace for XingGraph.
+
+    All methods are static and provide operations for listing, inspecting,
+    and deleting datasets and the data items within them.
+
+    Example:
+        ```python
+        import xinggraph
+
+        # List all accessible datasets
+        all_datasets = await xinggraph.datasets.list_datasets()
+
+        # Check cognify processing status for datasets
+        status = await xinggraph.datasets.get_status([dataset_id])
+
+        # Delete a specific data item from a dataset
+        await xinggraph.datasets.delete_data(dataset_id=dataset_id, data_id=data_id)
+        ```
+    """
+
+    @staticmethod
+    async def list_datasets(user: Optional[User] = None):
+        if user is None:
+            user = await get_default_user()
+
+        return await get_authorized_existing_datasets([], "read", user)
+
+    @staticmethod
+    def discover_datasets(directory_path: str):
+        return list(discover_directory_datasets(directory_path).keys())
+
+    @staticmethod
+    async def list_data(dataset_id: UUID, user: Optional[User] = None):
+        from xinggraph.modules.data.methods import get_dataset_data
+
+        if not user:
+            user = await get_default_user()
+
+        dataset = await get_authorized_dataset(user, dataset_id)
+
+        return await get_dataset_data(dataset.id)
+
+    @staticmethod
+    async def has_data(dataset_id: str, user: Optional[User] = None) -> bool:
+        if not user:
+            user = await get_default_user()
+
+        dataset = await get_authorized_dataset(user, dataset_id)
+
+        return await has_dataset_data(dataset.id)
+
+    @staticmethod
+    async def get_status(
+        dataset_ids: list[UUID], pipeline_names: Optional[list[str]] = None
+    ) -> dict:
+        # Backward-compatible default behavior: cognify-only flat map.
+        if not pipeline_names:
+            return await get_pipeline_status(dataset_ids, pipeline_name="cognify_pipeline")
+
+        # Preserve order while removing duplicates.
+        requested_pipelines = list(dict.fromkeys(pipeline_names))
+
+        # For one pipeline, keep flat shape.
+        if len(requested_pipelines) == 1:
+            return await get_pipeline_status(dataset_ids, pipeline_name=requested_pipelines[0])
+
+        # For multiple pipelines, return nested shape.
+        statuses_by_dataset = {str(dataset_id): {} for dataset_id in dataset_ids}
+        for pipeline_name in requested_pipelines:
+            pipeline_status = await get_pipeline_status(dataset_ids, pipeline_name=pipeline_name)
+            for dataset_id, status in pipeline_status.items():
+                statuses_by_dataset.setdefault(dataset_id, {})[pipeline_name] = status
+
+        return statuses_by_dataset
+
+    @staticmethod
+    async def empty_dataset(dataset_id: UUID, user: Optional[User] = None):
+        from xinggraph.modules.data.methods import delete_data, delete_dataset
+
+        if not user:
+            user = await get_default_user()
+
+        dataset = await get_authorized_dataset(user, dataset_id, "delete")
+
+        if not dataset:
+            raise UnauthorizedDataAccessError(f"Dataset {dataset_id} not accessible.")
+
+        async with set_database_global_context_variables(dataset.id, dataset.owner_id):
+            await delete_dataset_nodes_and_edges(dataset_id, user.id)
+
+            dataset_data = await get_dataset_data(dataset.id)
+
+            # Delete dataset record first while DatasetData junction rows still exist,
+            # so pipeline_status cleanup can find related Data records.
+            result = await delete_dataset(dataset)
+
+            # Delete individual data records; use return_exceptions so all are attempted
+            # even if some fail.
+            if dataset_data:
+                results = await asyncio.gather(
+                    *[delete_data(data, dataset_id) for data in dataset_data],
+                    return_exceptions=True,
+                )
+                deletion_errors = [r for r in results if isinstance(r, Exception)]
+                if deletion_errors:
+                    logger.error(
+                        "Failed to delete %d/%d data items from dataset %s: %s",
+                        len(deletion_errors),
+                        len(dataset_data),
+                        dataset_id,
+                        deletion_errors,
+                    )
+
+        return result
+
+    @staticmethod
+    async def delete_data(
+        dataset_id: UUID,
+        data_id: UUID,
+        user: Optional[User] = None,
+        mode: str = "soft",  # mode is there for backwards compatibility. Don't use "hard", it is dangerous.
+        delete_dataset_if_empty: bool = False,  # if this flag is True, delete the whole dataset if it is left empty after data deletion
+    ):
+        from xinggraph.modules.data.methods import delete_data, get_data, delete_dataset
+
+        if not user:
+            user = await get_default_user()
+
+        try:
+            dataset = await get_authorized_dataset(user, dataset_id, "delete")
+        except PermissionDeniedError:
+            raise UnauthorizedDataAccessError(f"Dataset {dataset_id} not accessible.")
+
+        if not dataset:
+            raise UnauthorizedDataAccessError(f"Dataset {dataset_id} not accessible.")
+
+        dataset_data = [data for data in await get_dataset_data(dataset.id) if data.id == data_id]
+
+        data = dataset_data[0] if len(dataset_data) > 0 else None
+
+        if not data:
+            # If data is not found in the system, user is using a custom graph model.
+            async with set_database_global_context_variables(dataset_id, dataset.owner_id):
+                await delete_data_nodes_and_edges(dataset_id, data_id, user.id)
+
+                dataset_data = await get_dataset_data(dataset.id)
+                if not dataset_data and delete_dataset_if_empty:
+                    await delete_dataset(dataset)
+
+            return {"status": "success"}
+
+        if not any(ds.id == dataset_id for ds in data.datasets):
+            raise UnauthorizedDataAccessError(f"Data {data_id} not accessible.")
+
+        async with set_database_global_context_variables(dataset_id, dataset.owner_id):
+            # Delete mode is exclusive: ledger rows imply the relational-ledger
+            # path; only ledger-free data probes the graph marker to distinguish
+            # graph-provenance data from legacy data without graph ownership.
+            if await has_data_related_nodes(dataset_id, data_id):
+                await delete_data_nodes_and_edges(dataset_id, data_id, user.id)
+            elif not await try_delete_data_by_graph_provenance(dataset_id, data_id):
+                await legacy_delete(data, "soft")
+
+            await delete_data(data, dataset_id)
+
+            dataset_data = await get_dataset_data(dataset.id)
+            if not dataset_data and delete_dataset_if_empty:
+                await delete_dataset(dataset)
+
+        return {"status": "success"}
+
+    @staticmethod
+    async def delete_all(user: Optional[User] = None):
+        if not user:
+            user = await get_default_user()
+
+        user_datasets = await get_authorized_existing_datasets([], "delete", user)
+
+        for dataset in user_datasets:
+            await datasets.empty_dataset(dataset.id, user)

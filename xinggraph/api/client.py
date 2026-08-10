@@ -1,0 +1,374 @@
+"""FastAPI server for the XingGraph API."""
+
+import os
+
+import uvicorn
+from traceback import format_exc
+from contextlib import asynccontextmanager
+from fastapi import Request
+from fastapi import FastAPI, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
+
+from xinggraph.exceptions import XingGraphApiError
+from xinggraph.shared.logging_utils import get_logger, setup_logging
+from xinggraph.api.v1.cloud.routers import get_checks_router
+from xinggraph.api.v1.permissions.routers import get_permissions_router
+from xinggraph.api.v1.settings.routers import get_settings_router
+from xinggraph.api.v1.datasets.routers import get_datasets_router
+from xinggraph.api.v1.cognify.routers import get_cognify_router
+from xinggraph.api.v1.search.routers import get_search_router
+from xinggraph.api.v1.ontologies.routers.get_ontology_router import get_ontology_router
+from xinggraph.api.v1.memify.routers import get_memify_router
+from xinggraph.api.v1.add.routers import get_add_router
+from xinggraph.api.v1.delete.routers import get_delete_router
+from xinggraph.api.v1.remember.routers import get_remember_router
+from xinggraph.api.v1.recall.routers import get_recall_router
+from xinggraph.api.v1.improve.routers import get_improve_router
+from xinggraph.api.v1.forget.routers import get_forget_router
+from xinggraph.api.v1.responses.routers import get_responses_router
+from xinggraph.api.v1.llm.routers import get_llm_router
+from xinggraph.api.v1.sync.routers import get_sync_router
+from xinggraph.api.v1.health.routers import get_health_router
+from xinggraph.api.v1.update.routers import get_update_router
+from xinggraph.api.v1.users.routers import (
+    get_auth_router,
+    get_register_router,
+    get_reset_password_router,
+    get_verify_router,
+    get_users_router,
+    get_visualize_router,
+    get_configuration_router,
+    get_user_id_by_email_router,
+)
+from xinggraph.api.v1.api_keys.routers import get_api_key_management_router
+from xinggraph.api.v1.agents.routers import get_agents_router
+from xinggraph.api.v1.visualize.routers import get_schema_router
+from xinggraph.api.v1.skills.routers import get_skills_router
+from xinggraph.api.v1.proposals.routers import get_proposals_router
+from xinggraph.api.v1.activity.routers import get_activity_router
+from xinggraph.api.v1.sessions import get_sessions_router
+from xinggraph.modules.users.methods.get_authenticated_user import REQUIRE_AUTHENTICATION
+
+# Ensure application logging is configured for container stdout/stderr
+setup_logging()
+logger = get_logger()
+
+app_environment = os.getenv("ENV", "prod")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # from xinggraph.modules.data.deletion import prune_system, prune_data
+    # await prune_data()
+    # await prune_system(metadata = True)
+    # if app_environment == "local" or app_environment == "dev":
+    from xinggraph.infrastructure.databases.relational import get_relational_engine
+    from xinggraph.run_migrations import run_migrations
+
+    try:
+        await run_migrations()
+    except Exception:
+        db_engine = get_relational_engine()
+        await db_engine.create_database()
+
+        await run_migrations()
+
+    from xinggraph.modules.users.methods import get_default_user
+
+    await get_default_user()
+    from xinggraph.modules.cognify.recovery import recover_stale_cognify_runs_on_startup
+
+    await recover_stale_cognify_runs_on_startup()
+
+    # Emit a clear startup message for docker logs
+    logger.info("Backend server has started")
+
+    yield
+
+    # Flush and close all cached database adapters so Ladybug can
+    # CHECKPOINT its WAL before the process exits.  Without this,
+    # a SIGTERM during an active WAL write leaves a half-written
+    # record on disk → "Corrupted wal file" on next startup.
+    logger.info("Shutting down: closing cached database engines")
+    from xinggraph.infrastructure.databases.graph.get_graph_engine import _create_graph_engine
+    from xinggraph.infrastructure.databases.vector.create_vector_engine import (
+        _create_vector_engine,
+    )
+
+    _create_graph_engine.cache_clear()
+    _create_vector_engine.cache_clear()
+
+
+app = FastAPI(debug=app_environment != "prod", lifespan=lifespan)
+
+
+# Read allowed origins from environment variable (comma-separated)
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS")
+if CORS_ALLOWED_ORIGINS:
+    allowed_origins = [
+        origin.strip() for origin in CORS_ALLOWED_ORIGINS.split(",") if origin.strip()
+    ]
+else:
+    allowed_origins = [
+        os.getenv("UI_APP_URL", "http://localhost:3000"),
+    ]  # Block all except explicitly set origins
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,  # Now controlled by env var
+    allow_credentials=True,
+    allow_methods=["OPTIONS", "GET", "PUT", "POST", "DELETE"],
+    allow_headers=["*"],
+)
+# To allow origins, set CORS_ALLOWED_ORIGINS env variable to a comma-separated list, e.g.:
+# CORS_ALLOWED_ORIGINS="https://yourdomain.com,https://another.com"
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title="XingGraph API",
+        version="1.0.0",
+        description="XingGraph API with Bearer token and Cookie auth",
+        routes=app.routes,
+    )
+
+    # Define security schemes with valid identifiers (no hyphens)
+    openapi_schema["components"]["securitySchemes"] = {
+        "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
+        "BearerAuth": {"type": "http", "scheme": "bearer"},
+    }
+
+    our_security = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
+
+    if REQUIRE_AUTHENTICATION:
+        # Set global security fallback
+        openapi_schema["security"] = our_security
+
+        # Replace per-operation security refs auto-generated by fastapi-users
+        # (they reference internal names like OAuth2PasswordBearer, APIKeyHeader, APIKeyCookie
+        # which no longer exist after we replaced securitySchemes above)
+        for path_data in openapi_schema.get("paths", {}).values():
+            for operation in path_data.values():
+                if isinstance(operation, dict) and "security" in operation:
+                    operation["security"] = our_security
+
+    app.openapi_schema = openapi_schema
+
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request.url.path == "/api/v1/auth/login":
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "LOGIN_BAD_CREDENTIALS"},
+        )
+
+    return JSONResponse(
+        status_code=400,
+        content=jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
+    )
+
+
+@app.exception_handler(XingGraphApiError)
+async def exception_handler(_: Request, exc: XingGraphApiError) -> JSONResponse:
+    detail = {}
+
+    if exc.name and exc.message and exc.status_code:
+        status_code = exc.status_code
+        detail["message"] = f"{exc.message} [{exc.name}]"
+    else:
+        # Log an error indicating the exception is improperly defined
+        logger.error("Improperly defined exception: %s", exc)
+        # Provide a default error response
+        detail["message"] = "An unexpected error occurred."
+        status_code = status.HTTP_418_IM_A_TEAPOT
+
+    # log the stack trace for easier serverside debugging
+    logger.error(format_exc())
+    return JSONResponse(status_code=status_code, content={"detail": detail["message"]})
+
+
+app.include_router(get_auth_router(), prefix="/api/v1/auth", tags=["auth"])
+
+app.include_router(
+    get_register_router(),
+    prefix="/api/v1/auth",
+    tags=["auth"],
+)
+
+app.include_router(
+    get_reset_password_router(),
+    prefix="/api/v1/auth",
+    tags=["auth"],
+)
+
+app.include_router(
+    get_verify_router(),
+    prefix="/api/v1/auth",
+    tags=["auth"],
+)
+
+app.include_router(get_api_key_management_router(), prefix="/api/v1/auth", tags=["auth"])
+
+app.include_router(get_add_router(), prefix="/api/v1/add", tags=["add"])
+
+app.include_router(get_cognify_router(), prefix="/api/v1/cognify", tags=["cognify"])
+
+app.include_router(get_memify_router(), prefix="/api/v1/memify", tags=["memify"])
+
+app.include_router(get_search_router(), prefix="/api/v1/search", tags=["search"])
+
+app.include_router(
+    get_permissions_router(),
+    prefix="/api/v1/permissions",
+    tags=["permissions"],
+)
+
+app.include_router(get_datasets_router(), prefix="/api/v1/datasets", tags=["datasets"])
+
+app.include_router(get_ontology_router(), prefix="/api/v1/ontologies", tags=["ontologies"])
+
+app.include_router(get_settings_router(), prefix="/api/v1/settings", tags=["settings"])
+
+app.include_router(get_visualize_router(), prefix="/api/v1/visualize", tags=["visualize"])
+
+app.include_router(get_schema_router(), prefix="/api/v1/schema", tags=["schema"])
+
+app.include_router(get_skills_router(), prefix="/api/v1/skills", tags=["skills"])
+app.include_router(get_proposals_router(), prefix="/api/v1/proposals", tags=["skills"])
+
+app.include_router(
+    get_configuration_router(),
+    prefix="/api/v1/configuration",
+    tags=["configuration"],
+)
+
+app.include_router(get_delete_router(), prefix="/api/v1/delete", tags=["delete"])
+
+app.include_router(get_update_router(), prefix="/api/v1/update", tags=["update"])
+
+app.include_router(get_responses_router(), prefix="/api/v1/responses", tags=["responses"])
+
+app.include_router(get_llm_router(), prefix="/api/v1/llm", tags=["llm"])
+
+app.include_router(get_sync_router(), prefix="/api/v1/sync", tags=["sync"])
+
+app.include_router(
+    get_users_router(),
+    prefix="/api/v1/users",
+    tags=["users"],
+)
+
+app.include_router(
+    get_user_id_by_email_router(),
+    prefix="/api/v1/users",
+    tags=["users"],
+)
+
+app.include_router(
+    get_checks_router(),
+    prefix="/api/v1/checks",
+    tags=["checks"],
+)
+
+app.include_router(
+    get_health_router(),
+    prefix="/health",
+    tags=["health"],
+)
+
+app.include_router(get_agents_router(), prefix="/api/v1/agents")
+
+# Activity / observability
+app.include_router(
+    get_activity_router(),
+    prefix="/api/v1/activity",
+    tags=["activity"],
+)
+
+# Sessions lifecycle + dashboard aggregates
+app.include_router(
+    get_sessions_router(),
+    prefix="/api/v1/sessions",
+    tags=["sessions"],
+)
+
+app.include_router(get_remember_router(), prefix="/api/v1/remember", tags=["remember"])
+app.include_router(get_recall_router(), prefix="/api/v1/recall", tags=["recall"])
+app.include_router(get_improve_router(), prefix="/api/v1/improve", tags=["improve"])
+app.include_router(get_forget_router(), prefix="/api/v1/forget", tags=["forget"])
+
+
+@app.get("/")
+async def root():
+    """
+    Root endpoint that returns a welcome message.
+    """
+    return {"message": "Hello, World, I am alive!"}
+
+
+def start_api_server(host: str = "0.0.0.0", port: int = 8000):
+    """
+    Start the API server using uvicorn.
+    Parameters:
+    host (str): The host for the server.
+    port (int): The port for the server.
+    """
+    import socket
+
+    try:
+        logger.info("Starting server at %s:%s", host, port)
+
+        # Bind before serving so the port is held during startup (including the
+        # lifespan migration): uvicorn runs the lifespan before it accepts on this
+        # socket, so while migrating, a second server on the same host:port fails
+        # fast with EADDRINUSE and no endpoint is served yet (requests queue).
+        # reuse_port=False keeps that guard — SO_REUSEPORT would let a second
+        # process share the port.
+        sock = socket.create_server((host, port), reuse_port=False)
+
+        config = uvicorn.Config(app, host=host, port=port)
+        uvicorn.Server(config).run(sockets=[sock])
+    except Exception as e:
+        logger.exception(f"Failed to start server: {e}")
+        # Here you could add any cleanup code or error recovery code.
+        raise e
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="XingGraph API server")
+    parser.add_argument(
+        "--agent-mode",
+        action="store_true",
+        default=None,
+        help="Enable agent mode (overrides XINGGRAPH_AGENT_MODE env var)",
+    )
+    args = parser.parse_args()
+
+    from xinggraph.modules.agents.agent_mode import is_agent_mode_enabled, set_agent_mode
+
+    if args.agent_mode:
+        set_agent_mode(True)
+
+    default_port = 8011 if is_agent_mode_enabled() else 8000
+
+    logger = setup_logging()
+
+    start_api_server(
+        host=os.getenv("HTTP_API_HOST", "0.0.0.0"),
+        port=int(os.getenv("HTTP_API_PORT", default_port)),
+    )

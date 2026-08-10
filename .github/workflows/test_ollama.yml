@@ -1,0 +1,111 @@
+name: test | ollama
+
+on:
+  workflow_call:
+
+env:
+  XINGGRAPH_SKIP_CONNECTION_TEST: 'true'
+
+jobs:
+
+  run_ollama_test:
+
+    # TODO: needs 32 Gb RAM for phi4 in a container — GitHub-hosted larger runner
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: XingGraph Setup
+        uses: ./.github/actions/xinggraph_setup
+        with:
+          python-version: '3.11.x'
+
+      - name: Install torch dependency
+        run: |
+          uv add torch
+
+      - name: Start Ollama container
+        run: |
+          docker run -d --name ollama -p 11434:11434 ollama/ollama
+          sleep 5
+          docker exec -d ollama bash -c "ollama serve --openai"
+
+      - name: Check Ollama logs
+        run: docker logs ollama
+
+      - name: Wait for Ollama to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:11434/v1/models > /dev/null; then
+              echo "Ollama is ready"
+              exit 0
+            fi
+            echo "Waiting for Ollama... attempt $i"
+            sleep 2
+          done
+          echo "Ollama failed to start"
+          exit 1
+
+      - name: Pull required Ollama models
+        run: |
+          curl -X POST http://localhost:11434/api/pull -d '{"name": "phi4"}'
+          curl -X POST http://localhost:11434/api/pull -d '{"name": "qwen3-embedding:latest"}'
+
+      - name: Call ollama API
+        run: |
+          curl -X POST http://localhost:11434/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "phi4",
+              "stream": false,
+              "messages": [
+                { "role": "system", "content": "You are a helpful assistant." },
+                { "role": "user", "content": "Whatever I say, answer with Yes." }
+              ]
+            }'
+          curl -X POST http://127.0.0.1:11434/api/embed \
+            -H "Content-Type: application/json" \
+             -d '{
+              "model": "qwen3-embedding:latest",
+            "input": "This is a test sentence to generate an embedding."
+            }'
+
+      - name: Dump Docker logs
+        run: |
+          docker ps
+          docker logs $(docker ps --filter "ancestor=ollama/ollama" --format "{{.ID}}")
+
+      - name: Download embedding tokenizer from S3
+        # Mirrored from huggingface.co/Qwen/Qwen3-Embedding-8B (Apache-2.0) so the
+        # embedding tokenizer loads offline and never hits HuggingFace 429s in CI.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_S3_DEV_USER_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_S3_DEV_USER_SECRET_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1
+          BUCKET: github-runner-xinggraph-tests
+          TOKENIZER_KEY: nightly_ci_artifacts/huggingface_models/qwen3-embedding-tokenizer.tar.gz
+          TOKENIZER_SHA256: 8f5834d8791c8da03220feaccc2fe9c443e23b1092dcd99c576ef613990bbd00
+        run: |
+          set -euo pipefail
+          aws s3 cp "s3://$BUCKET/$TOKENIZER_KEY" tokenizer.tar.gz
+          echo "$TOKENIZER_SHA256  tokenizer.tar.gz" | sha256sum -c -
+          tar -xzf tokenizer.tar.gz -C "$GITHUB_WORKSPACE"
+
+      - name: Run example test
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PYTHONFAULTHANDLER: 1
+          LLM_PROVIDER: "ollama"
+          LLM_API_KEY: "ollama"
+          LLM_ENDPOINT: "http://localhost:11434/v1/"
+          LLM_MODEL: "phi4"
+          EMBEDDING_PROVIDER: "ollama"
+          EMBEDDING_MODEL: "qwen3-embedding:latest"
+          EMBEDDING_ENDPOINT: "http://localhost:11434/api/embed"
+          EMBEDDING_DIMENSIONS: "4096"
+          # Load the tokenizer from the S3-mirrored local dir, fully offline.
+          HUGGINGFACE_TOKENIZER: "${{ github.workspace }}/qwen3-embedding-tokenizer"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: uv run python ./examples/demos/simple_xinggraph_example.py

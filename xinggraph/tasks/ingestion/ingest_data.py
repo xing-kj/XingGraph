@@ -1,0 +1,264 @@
+import json
+import inspect
+from uuid import UUID
+from typing import Union, BinaryIO, Any, List, Optional
+
+import xinggraph.modules.ingestion as ingestion
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from xinggraph.infrastructure.databases.relational import get_relational_engine
+from xinggraph.modules.data.models import Data
+from xinggraph.modules.ingestion.exceptions import IngestionError
+from xinggraph.modules.users.models import User
+from xinggraph.modules.users.methods import get_default_user
+from xinggraph.modules.users.permissions.methods import get_specific_user_permission_datasets
+from xinggraph.infrastructure.files.utils.open_data_file import open_data_file
+from xinggraph.infrastructure.files.utils.get_data_file_path import get_data_file_path
+from xinggraph.modules.data.methods import (
+    get_authorized_existing_datasets,
+    get_dataset_data,
+    load_or_create_datasets,
+)
+
+from .save_data_item_to_storage import save_data_item_to_storage
+from .data_item_to_text_file import data_item_to_text_file
+from .data_item import DataItem
+
+
+async def ingest_data(
+    data: Any,
+    dataset_name: str,
+    user: User,
+    node_set: Optional[List[str]] = None,
+    dataset_id: UUID = None,
+    preferred_loaders: dict[str, dict[str, Any]] = None,
+    importance_weight: float = 0.5,
+):
+    if not user:
+        user = await get_default_user()
+
+    def get_external_metadata_dict(data_item: Union[BinaryIO, str, Any]) -> dict[str, Any]:
+        if hasattr(data_item, "dict") and inspect.ismethod(getattr(data_item, "dict")):
+            return {"metadata": data_item.dict(), "origin": str(type(data_item))}
+        else:
+            return {}
+
+    async def store_data_to_dataset(
+        data: Any,
+        dataset_name: str,
+        user: User,
+        node_set: Optional[List[str]] = None,
+        dataset_id: UUID = None,
+        preferred_loaders: dict[str, dict[str, Any]] = None,
+    ):
+        new_datapoints = []
+        existing_data_points = []
+        dataset_new_data_points = []
+
+        if not isinstance(data, list):
+            # Convert data to a list as we work with lists further down.
+            data = [data]
+
+        if dataset_id:
+            # Retrieve existing dataset
+            dataset = await get_specific_user_permission_datasets(user.id, "write", [dataset_id])
+            # Convert from list to Dataset element
+            if isinstance(dataset, list):
+                dataset = dataset[0]
+        else:
+            # Find existing dataset or create a new one
+            existing_datasets = await get_authorized_existing_datasets(
+                user=user, permission_type="write", datasets=[dataset_name]
+            )
+            dataset = await load_or_create_datasets(
+                dataset_names=[dataset_name],
+                existing_datasets=existing_datasets,
+                user=user,
+            )
+            if isinstance(dataset, list):
+                dataset = dataset[0]
+
+        dataset_data: list[Data] = await get_dataset_data(dataset.id)
+        dataset_data_map = {str(data.id): True for data in dataset_data}
+
+        db_engine = get_relational_engine()
+
+        # Pre-loop: compute data_id for every item and cache intermediate results
+        # to avoid repeating expensive I/O in the main loop.
+        data_point_ids = []
+        precomputed_items = {}
+        for data_item in data:
+            underlying_data = data_item.data if isinstance(data_item, DataItem) else data_item
+            item_data_id = data_item.data_id if isinstance(data_item, DataItem) else None
+
+            original_file_path = await save_data_item_to_storage(underlying_data)
+            actual_file_path = get_data_file_path(original_file_path)
+
+            async with open_data_file(actual_file_path) as file:
+                classified_data = ingestion.classify(file)
+                data_id = await ingestion.identify(classified_data, user)
+
+            if item_data_id is not None:
+                data_id = item_data_id
+
+            data_point_ids.append(data_id)
+            precomputed_items[id(data_item)] = {
+                "original_file_path": original_file_path,
+                "actual_file_path": actual_file_path,
+                "data_id": data_id,
+            }
+
+        existing_data_map: dict = {}
+        if data_point_ids:
+            async with db_engine.get_async_session() as session:
+                result = await session.execute(select(Data).filter(Data.id.in_(data_point_ids)))
+                for dp in result.scalars().all():
+                    existing_data_map[str(dp.id)] = dp
+
+        for data_item in data:
+            # Support for DataItem (custom label + data + optional data_id / external_metadata)
+            current_label = None
+            underlying_data = data_item
+            item_data_id = None
+            item_external_metadata = None
+
+            if isinstance(data_item, DataItem):
+                underlying_data = data_item.data
+                current_label = data_item.label
+                item_data_id = data_item.data_id
+                item_external_metadata = data_item.external_metadata
+
+            # Retrieve cached intermediate results from pre-loop to avoid re-processing
+            cached = precomputed_items.get(id(data_item), {})
+            original_file_path = cached.get("original_file_path")
+            actual_file_path = cached.get("actual_file_path")
+
+            # Store all input data as text files in XingGraph data storage
+            xinggraph_storage_file_path, loader_engine = await data_item_to_text_file(
+                actual_file_path,
+                preferred_loaders,
+            )
+
+            if loader_engine is None:
+                raise IngestionError("Loader cannot be None")
+
+            # Use data_id computed in pre-loop
+            data_id = cached.get("data_id")
+
+            # Find metadata from original file
+            # Standard flow: extract metadata from both original and stored files
+            async with open_data_file(original_file_path) as file:
+                classified_data = ingestion.classify(file)
+                original_file_metadata = classified_data.get_metadata()
+
+            # Find metadata from XingGraph data storage text file
+            async with open_data_file(xinggraph_storage_file_path) as file:
+                classified_data = ingestion.classify(file)
+                storage_file_metadata = classified_data.get_metadata()
+
+            data_point = existing_data_map.get(str(data_id))
+
+            # TODO: Maybe allow getting of external metadata through ingestion loader?
+            ext_metadata = get_external_metadata_dict(data_item)
+
+            # Merge DataItem.external_metadata if present
+            if item_external_metadata:
+                ext_metadata.update(item_external_metadata)
+
+            if node_set:
+                ext_metadata["node_set"] = node_set
+
+            if data_point is not None:
+                # Content-change detection: reset pipeline_status when content changed
+                new_content_hash = original_file_metadata["content_hash"]
+                content_changed = str(data_point.content_hash) != str(new_content_hash)
+
+                data_point.name = original_file_metadata["name"]
+                data_point.raw_data_location = xinggraph_storage_file_path
+                data_point.original_data_location = original_file_metadata["file_path"]
+                data_point.extension = storage_file_metadata["extension"]
+                data_point.mime_type = storage_file_metadata["mime_type"]
+                data_point.original_extension = original_file_metadata["extension"]
+                data_point.original_mime_type = original_file_metadata["mime_type"]
+                data_point.loader_engine = loader_engine.loader_name
+                data_point.owner_id = user.id
+                data_point.content_hash = new_content_hash
+                data_point.raw_content_hash = storage_file_metadata["content_hash"]
+                data_point.file_size = original_file_metadata["file_size"]
+                data_point.external_metadata = ext_metadata
+                data_point.node_set = json.dumps(node_set) if node_set else None
+                data_point.tenant_id = user.tenant_id if user.tenant_id else None
+                data_point.label = current_label
+
+                if content_changed:
+                    data_point.pipeline_status = {}
+
+                # Check if data is already in dataset
+                if str(data_point.id) in dataset_data_map:
+                    existing_data_points.append(data_point)
+                else:
+                    dataset_new_data_points.append(data_point)
+                    dataset_data_map[str(data_point.id)] = True
+            else:
+                if str(data_id) in dataset_data_map:
+                    continue
+
+                data_point = Data(
+                    id=data_id,
+                    name=original_file_metadata["name"],
+                    raw_data_location=xinggraph_storage_file_path,
+                    original_data_location=original_file_metadata["file_path"],
+                    extension=storage_file_metadata["extension"],
+                    mime_type=storage_file_metadata["mime_type"],
+                    original_extension=original_file_metadata["extension"],
+                    original_mime_type=original_file_metadata["mime_type"],
+                    loader_engine=loader_engine.loader_name,
+                    owner_id=user.id,
+                    content_hash=original_file_metadata["content_hash"],
+                    raw_content_hash=storage_file_metadata["content_hash"],
+                    external_metadata=ext_metadata,
+                    node_set=json.dumps(node_set) if node_set else None,
+                    data_size=original_file_metadata["file_size"],
+                    tenant_id=user.tenant_id if user.tenant_id else None,
+                    pipeline_status={},
+                    token_count=-1,
+                    label=current_label,
+                    importance_weight=importance_weight,
+                )
+
+                new_datapoints.append(data_point)
+                dataset_data_map[str(data_point.id)] = True
+
+        async with db_engine.get_async_session() as session:
+            if dataset not in session:
+                session.add(dataset)
+
+            if len(new_datapoints) > 0:
+                dataset.data.extend(new_datapoints)
+
+            if len(existing_data_points) > 0:
+                for data_point in existing_data_points:
+                    await session.merge(data_point)
+
+            if len(dataset_new_data_points) > 0:
+                dataset.data.extend(dataset_new_data_points)
+
+            await session.merge(dataset)
+
+            await session.commit()
+
+        return existing_data_points + dataset_new_data_points + new_datapoints
+
+    # data.id is a content hash, so concurrent ingests of the same content both
+    # see it as missing and try to INSERT the same primary key — the loser hits
+    # "UNIQUE constraint failed: data.id". Retrying re-reads the now-committed row
+    # and takes the existing-data branch (update + link) instead of inserting.
+    # File writes are content-addressed, so re-running is idempotent.
+    try:
+        return await store_data_to_dataset(
+            data, dataset_name, user, node_set, dataset_id, preferred_loaders
+        )
+    except IntegrityError:
+        return await store_data_to_dataset(
+            data, dataset_name, user, node_set, dataset_id, preferred_loaders
+        )

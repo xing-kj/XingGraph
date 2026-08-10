@@ -1,0 +1,344 @@
+from uuid import UUID
+from typing import Union, Optional, List, Type
+
+from xinggraph.modules.engine.models.node_set import NodeSet
+from xinggraph.modules.engine.models import Skill
+from xinggraph.modules.users.models import User
+from xinggraph.infrastructure.databases.vector.embeddings.config import EmbeddingConfig
+from xinggraph.infrastructure.llm.config import LLMConfig
+from xinggraph.modules.search.types import SearchResult, SearchType
+from xinggraph.modules.users.methods import get_default_user
+from xinggraph.base_config import get_base_config
+from xinggraph.modules.search.methods import search as search_function
+from xinggraph.modules.data.methods import get_authorized_existing_datasets
+from xinggraph.modules.data.exceptions import DatasetNotFoundError
+from xinggraph.context_global_variables import set_session_user_context_variable
+from xinggraph.shared.logging_utils import get_logger
+from xinggraph.infrastructure.databases.exceptions import DatabaseNotCreatedError
+from xinggraph.exceptions import XingGraphValidationError
+from xinggraph.modules.users.exceptions.exceptions import UserNotFoundError
+from xinggraph.modules.observability import (
+    new_span,
+    XINGGRAPH_SEARCH_QUERY,
+    XINGGRAPH_SEARCH_TYPE,
+    XINGGRAPH_RESULT_SUMMARY,
+    XINGGRAPH_RESULT_COUNT,
+)
+
+logger = get_logger()
+
+
+async def search(
+    query_text: str,
+    query_type: SearchType = SearchType.GRAPH_COMPLETION,
+    user: Optional[User] = None,
+    datasets: Optional[Union[list[str], str]] = None,
+    dataset_ids: Optional[Union[list[UUID], UUID]] = None,
+    system_prompt_path: str = "answer_simple_question.txt",
+    system_prompt: Optional[str] = None,
+    top_k: int = 15,
+    node_type: Optional[Type] = NodeSet,
+    node_name: Optional[List[str]] = None,
+    node_name_filter_operator: str = "OR",
+    only_context: bool = False,
+    session_id: Optional[str] = None,
+    wide_search_top_k: Optional[int] = 100,
+    triplet_distance_penalty: Optional[float] = 6.5,
+    feedback_influence: float = get_base_config().default_feedback_influence,
+    verbose: bool = False,
+    retriever_specific_config: Optional[dict] = None,
+    neighborhood_depth: Optional[int] = None,
+    neighborhood_seed_top_k: Optional[int] = None,
+    skills: Optional[List[Union[str, Skill]]] = None,
+    tools: Optional[List[str]] = None,
+    max_iter: Optional[int] = None,
+    include_references: bool = False,
+    llm_config: Optional[LLMConfig] = None,
+    embedding_config: Optional[EmbeddingConfig] = None,
+) -> List[SearchResult]:
+    if neighborhood_depth is not None and (
+        not isinstance(neighborhood_depth, int) or neighborhood_depth < 1
+    ):
+        raise XingGraphValidationError(
+            message="neighborhood_depth must be a positive integer.",
+            name="InvalidNeighborhoodDepth",
+        )
+    if neighborhood_seed_top_k is not None and (
+        not isinstance(neighborhood_seed_top_k, int) or neighborhood_seed_top_k < 1
+    ):
+        raise XingGraphValidationError(
+            message="neighborhood_seed_top_k must be a positive integer.",
+            name="InvalidNeighborhoodSeedTopK",
+        )
+    if max_iter is not None and (not isinstance(max_iter, int) or max_iter < 1):
+        raise XingGraphValidationError(
+            message="max_iter must be a positive integer.",
+            name="InvalidMaxIter",
+        )
+    """
+    Search and query the knowledge graph for insights, information, and connections.
+
+    This is the final step in the XingGraph workflow that retrieves information from the
+    processed knowledge graph. It supports multiple search modes optimized for different
+    use cases - from simple fact retrieval to complex reasoning and code analysis.
+
+    Search Prerequisites:
+        - **LLM_API_KEY**: Required for GRAPH_COMPLETION and RAG_COMPLETION search types
+        - **Data Added**: Must have data previously added via `xinggraph.add()`
+        - **Knowledge Graph Built**: Must have processed data via `xinggraph.cognify()`
+        - **Dataset Permissions**: User must have 'read' permission on target datasets
+        - **Vector Database**: Must be accessible for semantic search functionality
+
+    Search Types & Use Cases:
+
+        **GRAPH_COMPLETION** (Default - Recommended):
+            Natural language Q&A using full graph context and LLM reasoning.
+            Best for: Complex questions, analysis, summaries, insights.
+            Returns: Conversational AI responses with graph-backed context.
+
+        **RAG_COMPLETION**:
+            Traditional RAG using document chunks without graph structure.
+            Best for: Direct document retrieval, specific fact-finding.
+            Returns: LLM responses based on relevant text chunks.
+
+        **CHUNKS**:
+            Raw text segments that match the query semantically.
+            Best for: Finding specific passages, citations, exact content.
+            Returns: Ranked list of relevant text chunks with metadata.
+
+        **SUMMARIES**:
+            Pre-generated summaries of content.
+            Best for: Quick overviews, document abstracts, topic summaries.
+            Returns: Generated content summaries.
+
+        **CODE**:
+            Code-specific search with syntax and semantic understanding.
+            Best for: Finding functions, classes, implementation patterns.
+            Returns: Structured code information with context and relationships.
+
+        **CYPHER**:
+            Direct graph database queries using Cypher syntax.
+            Best for: Advanced users, specific graph traversals, debugging.
+            Returns: Raw graph query results.
+
+        **FEELING_LUCKY**:
+            Intelligently selects and runs the most appropriate search type.
+            Best for: General-purpose queries or when you're unsure which search type is best.
+            Returns: The results from the automatically selected search type.
+
+        **CHUNKS_LEXICAL**:
+            Token-based lexical chunk search (BM25-style lexical ranking). Best for: exact-term matching, stopword-aware lookups.
+            Returns: Ranked text chunks (optionally with scores).
+
+    Args:
+        query_text: Your question or search query in natural language.
+            Examples:
+            - "What are the main themes in this research?"
+            - "How do these concepts relate to each other?"
+            - "Find information about machine learning algorithms"
+            - "What functions handle user authentication?"
+
+        query_type: SearchType enum specifying the search mode.
+                   Defaults to GRAPH_COMPLETION for conversational AI responses.
+
+        user: User context for data access permissions. Uses default if None.
+
+        datasets: Dataset name(s) to search within. Searches all accessible if None.
+            - Single dataset: "research_papers"
+            - Multiple datasets: ["docs", "reports", "analysis"]
+            - None: Search across all user datasets
+
+        dataset_ids: Alternative to datasets - use specific UUID identifiers.
+
+        system_prompt_path: Custom system prompt file for LLM-based search types.
+                          Defaults to "answer_simple_question.txt".
+
+        top_k: Maximum number of results to return (1-N)
+              Higher values provide more comprehensive but potentially noisy results.
+
+        node_type: Filter results to specific entity types (for advanced filtering).
+
+        node_name: Filter results to specific named entities (for targeted search).
+
+        node_name_filter_operator: Operator determining how to filter based on node names.
+                                    Possible values: AND, OR (default is OR, i.e. disjunction)
+
+        session_id: Optional session identifier for caching Q&A interactions. Defaults to 'default_session' if None.
+
+        verbose: If True, returns detailed result information including graph representation (when possible).
+
+        retriever_specific_config: Optional dictionary of additional configuration parameters specific to the retriever being used.
+        skills: Explicit skill names or Skill objects to load into the agentic retriever.
+        tools: Optional whitelist of tool names available to the agentic retriever.
+        max_iter: Maximum number of agentic tool-call iterations before forcing a final answer.
+
+    Returns:
+        list: Search results in format determined by query_type:
+
+            **GRAPH_COMPLETION/RAG_COMPLETION**:
+                [List of conversational AI response strings]
+
+            **CHUNKS**:
+                [List of relevant text passages with source metadata]
+
+            **SUMMARIES**:
+                [List of generated content summaries]
+
+            **CODE**:
+                [List of structured code information with context]
+
+            **FEELING_LUCKY**:
+                [List of results in the format of the search type that is automatically selected]
+
+
+
+
+
+    Performance & Optimization:
+        - **GRAPH_COMPLETION**: Slower but most intelligent, uses LLM + graph context
+        - **RAG_COMPLETION**: Medium speed, uses LLM + document chunks (no graph traversal)
+        - **CHUNKS**: Fastest, pure vector similarity search without LLM
+        - **SUMMARIES**: Fast, returns pre-computed summaries
+        - **CODE**: Medium speed, specialized for code understanding
+        - **FEELING_LUCKY**: Variable speed, uses LLM + search type selection intelligently
+        - **top_k**: Start with 15, increase for comprehensive analysis (max 100)
+        - **datasets**: Specify datasets to improve speed and relevance
+
+    Next Steps After Search:
+        - Use results for further analysis or application integration
+        - Combine different search types for comprehensive understanding
+        - Export insights for reporting or downstream processing
+        - Iterate with refined queries based on initial results
+
+    Environment Variables:
+        Required for LLM-based search types (GRAPH_COMPLETION, RAG_COMPLETION):
+        - LLM_API_KEY: API key for your LLM provider
+
+        Optional:
+        - LLM_PROVIDER, LLM_MODEL: Configure LLM for search responses
+        - VECTOR_DB_PROVIDER: Must match what was used during cognify
+        - GRAPH_DATABASE_PROVIDER: Must match what was used during cognify
+
+    """
+    agentic_overrides = {
+        "skills": skills,
+        "tools": tools,
+        "max_iter": max_iter,
+    }
+
+    # Route to remote instance if connected via serve()
+    from xinggraph.api.v1.serve.state import get_remote_client
+
+    client = get_remote_client()
+    if client is not None:
+        return await client.search(
+            query_text,
+            search_type=query_type,
+            datasets=datasets,
+            dataset_ids=dataset_ids,
+            system_prompt=system_prompt,
+            top_k=top_k,
+            node_name=node_name,
+            only_context=only_context,
+            verbose=verbose,
+            include_references=include_references,
+            **{key: value for key, value in agentic_overrides.items() if value is not None},
+        )
+
+    with new_span("xinggraph.api.search") as span:
+        span.set_attribute(XINGGRAPH_SEARCH_QUERY, query_text[:500])
+        span.set_attribute(XINGGRAPH_SEARCH_TYPE, str(query_type.value))
+        span.set_attribute("xinggraph.search.top_k", top_k)
+
+        # We use lists from now on for datasets
+        if isinstance(datasets, UUID) or isinstance(datasets, str):
+            datasets = [datasets]
+
+        if (
+            skills is not None or tools is not None
+        ) and query_type is not SearchType.AGENTIC_COMPLETION:
+            raise XingGraphValidationError(
+                message="skills/tools require query_type=SearchType.AGENTIC_COMPLETION.",
+                name="InvalidAgenticSearchConfig",
+            )
+
+        allowed_node_name_operators = {"AND", "OR"}
+        normalized_node_name_filter_operator = (node_name_filter_operator or "").strip().upper()
+
+        if normalized_node_name_filter_operator not in allowed_node_name_operators:
+            raise XingGraphValidationError(
+                f"Invalid node_name_filter_operator: {node_name_filter_operator!r}. Must be one of {sorted(allowed_node_name_operators)}."
+            )
+
+        if user is None:
+            try:
+                user = await get_default_user()
+            except (DatabaseNotCreatedError, UserNotFoundError) as error:
+                # Provide a clear, actionable message instead of surfacing low-level stacktraces
+                raise XingGraphValidationError(
+                    message=(
+                        "Search prerequisites not met: no database/default user found. "
+                        "Initialize XingGraph before searching by:\n"
+                        "• running `await xinggraph.add(...)` followed by `await xinggraph.cognify()`."
+                    ),
+                    name="SearchPreconditionError",
+                ) from error
+
+        await set_session_user_context_variable(user)
+
+        # Transform string based datasets to UUID - String based datasets can only be found for current user
+        if datasets is not None and all(isinstance(dataset, str) for dataset in datasets):
+            datasets = await get_authorized_existing_datasets(datasets, "read", user)
+            datasets = [dataset.id for dataset in datasets]
+            if not datasets:
+                raise DatasetNotFoundError(message="No datasets found.")
+
+        if query_type is SearchType.AGENTIC_COMPLETION:
+            active_dataset_refs = dataset_ids if dataset_ids else datasets
+            if isinstance(active_dataset_refs, UUID):
+                active_dataset_refs = [active_dataset_refs]
+            if not active_dataset_refs or len(active_dataset_refs) != 1:
+                raise XingGraphValidationError(
+                    message="Agentic skill search requires exactly one explicit dataset.",
+                    name="InvalidAgenticDatasetScope",
+                )
+
+        if any(v is not None for v in agentic_overrides.values()):
+            retriever_specific_config = dict(retriever_specific_config or {})
+            for key, value in agentic_overrides.items():
+                if value is not None:
+                    retriever_specific_config[key] = value
+
+        filtered_search_results = await search_function(
+            query_text=query_text,
+            query_type=query_type,
+            dataset_ids=dataset_ids if dataset_ids else datasets,
+            user=user,
+            system_prompt_path=system_prompt_path,
+            system_prompt=system_prompt,
+            top_k=top_k,
+            node_type=node_type,
+            node_name=node_name,
+            node_name_filter_operator=normalized_node_name_filter_operator,
+            only_context=only_context,
+            session_id=session_id,
+            wide_search_top_k=wide_search_top_k,
+            triplet_distance_penalty=triplet_distance_penalty,
+            feedback_influence=feedback_influence,
+            verbose=verbose,
+            retriever_specific_config=retriever_specific_config,
+            neighborhood_depth=neighborhood_depth,
+            neighborhood_seed_top_k=neighborhood_seed_top_k,
+            include_references=include_references,
+            llm_config=llm_config,
+            embedding_config=embedding_config,
+        )
+
+        n = len(filtered_search_results) if filtered_search_results else 0
+        span.set_attribute(XINGGRAPH_RESULT_COUNT, n)
+        span.set_attribute(
+            XINGGRAPH_RESULT_SUMMARY,
+            f"Found {n} result(s) via {query_type.value}",
+        )
+
+        return filtered_search_results

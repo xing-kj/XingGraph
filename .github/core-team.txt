@@ -1,0 +1,2 @@
+# Core team GitHub logins (one per line). Lines may begin with @; case-insensitive.
+# TODO: add your project maintainers here.
