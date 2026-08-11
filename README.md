@@ -1,438 +1,322 @@
-<div align="center">
-  <a href="https://github.com/xing-kj/xinggraph">
-    <h1>XingGraph</h1>
-  </a>
+# XingGraph
 
-  <br />
+知识图谱驱动的 AI 记忆与检索系统 — 让 LLM 从「文档堆」进化到「会回答、会对比、会溯源，还给你看证据」。
+_AI memory & retrieval engine built on a knowledge graph — from raw documents to answers that compare, cross-reference, and show their sources._
 
-  XingGraph - The Open-Source AI Memory Platform for Agents
+> 核心亮点 / Highlights
+>
+> - **WIKI 多主体渐进式检索** (`WIKI_COMPLETION`)：把一句"软件测评式"提问自动拆成多个主体，实体锚定 → 图遍历 → Wiki 汇总 → LLM 筛选 → 回答，支持跨主体横向对比。
+> - **structured_doc 结构化建图**：按 PDF 解析后的 `Doc N/total` 结构切块入图，保留标题层级；回答时自动启用**标题归因** prompt，引用来源章节而非原始 wrapper 头。
+> - **model_hop 产品型号定向跳转**：只沿 `is_product → is_a PRODUCT_MODEL` 走，问一个型号绝不扩散到姊妹型号。
+> - **`search_type: null` 自动路由** + 会话缓存 / 多租户隔离 / 全程检索 trace。
 
-  <p align="center">
-  <a href="https://www.youtube.com/watch?v=8hmqS2Y5RVQ&t=13s">Demo</a>
-  .
-  <a href="https://docs.xinggraph.ai/">Docs</a>
-  .
-  <a href="https://xinggraph.ai">Learn More</a>
-  ·
-  <a href="https://discord.gg/NQPKmU5CCg">Join Discord</a>
-  ·
-  <a href="https://www.reddit.com/r/AIMemory/">Join r/AIMemory</a>
-  .
-  <a href="https://github.com/xing-kj/xinggraph-community">Community Plugins & Add-ons</a>
-  </p>
+---
 
+## 目录 / Contents
 
-  [![GitHub forks](https://img.shields.io/github/forks/xing-kj/xinggraph.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/xing-kj/xinggraph/network/)
-  [![GitHub stars](https://img.shields.io/github/stars/xing-kj/xinggraph.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/xing-kj/xinggraph/stargazers/)
-  [![GitHub commits](https://badgen.net/github/commits/xing-kj/xinggraph)](https://GitHub.com/xing-kj/xinggraph/commit/)
-  [![GitHub tag](https://badgen.net/github/tag/xing-kj/xinggraph)](https://github.com/xing-kj/xinggraph/tags/)
-  [![Downloads](https://static.pepy.tech/badge/xinggraph)](https://pepy.tech/project/xinggraph)
-  [![License](https://img.shields.io/github/license/xing-kj/xinggraph?colorA=00C586&colorB=000000)](https://github.com/xing-kj/xinggraph/blob/main/LICENSE)
-  [![Contributors](https://img.shields.io/github/contributors/xing-kj/xinggraph?colorA=00C586&colorB=000000)](https://github.com/xing-kj/xinggraph/graphs/contributors)
-  <a href="https://github.com/sponsors/xing-kj"><img src="https://img.shields.io/badge/Sponsor-❤️-ff69b4.svg" alt="Sponsor"></a>
+- [核心特性](#核心特性--core-features)
+- [一个例子看懂它](#一个例子看懂它--one-example-to-see-it)
+- [工作原理](#工作原理--how-it-works)
+- [为什么比 GraphRAG / 纯 LLM-wiki 更优](#为什么比-graphrag--纯-llm-wiki-更优--why-its-better-than-graphrag-and-vectorless-llmwiki)
+- [安装](#安装--installation)
+- [快速开始（CLI）](#快速开始cli--quickstart)
+- [⭐ WIKI 多主体搜索](#-wiki-多主体搜索--wiki-multi-subject-search)
+- [⭐ structured_doc 建图与标题归因](#-structured_doc-建图与标题归因--graph-building-with-title-attribution)
+- [API 速查](#api-速查--api-reference)
+- [项目结构](#项目结构--project-structure)
+- [开发命令](#开发命令--development)
 
-<p>
-  <a href="https://trendshift.io/repositories/13955" target="_blank" style="display:inline-block;">
-    <img src="https://trendshift.io/api/badge/repositories/13955" alt="xing-kj%2Fxinggraph | Trendshift" width="250" height="55" />
-  </a>
-</p>
+---
 
-XingGraph is the open-source AI memory platform that gives AI agents persistent long-term memory across sessions. Ingest data in any format, build a self-hosted knowledge graph, and let every agent recall, connect, and act with full context
+## 核心特性 / Core Features
 
-  <p align="center">
-  🌐 This README is also available in:
-  :
-  <!-- Keep these links. Translations will automatically update with the README. -->
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=de">Deutsch</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=es">Español</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=fr">Français</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=ja">日本語</a> |
-  <a href="README_ko.md">한국어</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=pt">Português</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=ru">Русский</a> |
-  <a href="https://www.readme-i18n.com/xing-kj/xinggraph?lang=zh">中文</a>
-  </p>
+| 能力 | 说明 | 入口 |
+|---|---|---|
+| **WIKI 多主体搜索** | Step0 LLM 抽取主体+属性 → Step1 实体锚定 → Step2 `Entity→Chunk→Wiki` 图遍历 → Step3 Wiki 向量扩展 → Step4 LLM 筛选 → Step5 回答。多主体查询自动放宽 `top_k`，支持横向对比。 | `search_type=WIKI_COMPLETION` |
+| **structured_doc 建图** | 识别 PDF 解析 wrapper（`Doc N/total ... titles=[...]`）逐块入库，标题层级写入 chunk 元数据。 | `--chunker structured_doc` |
+| **标题归因回答** | 检测到数据集用 structured_doc 建图后，自动切换专用 system prompt，回答引用文档小标题而非 wrapper 头。 | 自动，无需手工配置 |
+| **model_hop** | 沿产品→型号边定向跳转，型号自锚定时只返回自身，避免扩展到兄弟型号。 | WIKI 检索内置分支 |
+| **自动路由** | `search_type: null` 时按查询内容选最优策略；会话命中时短路图搜索。 | `xinggraph.recall` 默认行为 |
+| **会话/多租户** | `--user-id` 多 agent 隔离，session 缓存、trace 全程记录。 | CLI / API |
 
-<p align="center">
-  <img src="assets/memory-graph.png" alt="XingGraph Memory Graph" width="80%" />
-</p>
-</div>
+---
 
-📄 Read the research paper: [Optimizing the Interface Between Knowledge Graphs and LLMs for Complex Reasoning](https://arxiv.org/abs/2505.24478) — XingGraph Contributors et al., 2025
+## 一个例子看懂它 / One Example to See It
 
+把一份**医院智慧药房投标文档**（PDF → 结构化解析 → 入图），然后问一句多主体对比问题。
 
-## About XingGraph
+```
+Q: 对比 A 型号储药发药一体机 与 B 型号 的差异，以及与现有 HIS 系统的对接方式
+```
 
-XingGraph is an open-source AI memory platform for AI Agents. Ingest data in any format, and XingGraph continuously builds a self-hosted knowledge graph that gives your agents persistent long-term memory across sessions. XingGraph combines vector embeddings, graph reasoning, and cognitive-science-grounded ontology generation to make documents both searchable by meaning and connected by relationships that evolve as your knowledge does.
+**纯文本检索（无向量 LLM-wiki 类）** 只会答到：*"A 型号储药发药一体机是 …"* — 丢了 B、丢了 HIS，没有对比。
 
-:star: _Help us reach more developers and grow the xinggraph community. Star this repo!_
+**XingGraph WIKI 渐进式检索**：
 
-:books: _Check our detailed [documentation](https://docs.xinggraph.ai/getting-started/installation#environment-configuration) for setup and configuration._
+1. **Step0 拆主体** → `subjects: [A, B, HIS]`，`attributes: [差异, 对接方式]` → 多主体自动把 `top_k` 从 8 提到 `max(15, 3×5)=15`
+2. **Step1 实体锚定** → 三个主体各自在图里找到锚点，subject 永不过滤
+3. **Step2 图遍历** → 沿 `Entity→Chunk→Wiki` 把三者的章节级摘要拉进来
+4. **Step4 LLM 筛选** → 只留真正能回答差异/对接的 wiki
+5. **Step5 回答** → 输出结构化的对比 + 每条引用章节小标题
 
-:crab: _Available as a plugin for your OpenClaw — [xinggraph-openclaw](https://www.npmjs.com/package/@xinggraph/xinggraph-openclaw)_
+**你实际看到的图谱**（示意）：
+<!-- TODO: 替换为你的图谱截图，路径 assets/demo/graph-demo.png -->
+<img src="assets/demo/graph-demo.png" alt="知识图谱效果图" width="720px"/>
 
-✴️ _Available as a plugin for your Claude Code — [claude-code-plugin](https://github.com/xing-kj/xinggraph-integrations/tree/main/integrations/claude-code)_
+**一次真实问答的链路**（示意）：
+<!-- TODO: 替换为你的问答截图，路径 assets/demo/qa-demo.png -->
+<img src="assets/demo/qa-demo.png" alt="问答链路效果图" width="720px"/>
 
-🦀 _Available as a Rust client — [xinggraph-rs](https://github.com/xing-kj/xinggraph-rs)_
+> 中文备注：上图是你贴效果图的位置。README 渲染时 GitHub 会自动按 `assets/demo/*.png` 的相对路径展示；把两张截图放进该目录即可。
 
-🟦 _Available as a TypeScript client — [@xinggraph/xinggraph-ts](https://www.npmjs.com/package/@xinggraph/xinggraph-ts)_
+---
 
+## 工作原理 / How It Works
 
+### 建图管线 / Graph construction
 
-### Why use XingGraph:
+```mermaid
+flowchart LR
+    subgraph INGEST[Ingest 数据入图]
+        A[文档 / 投标文件 PDF] --> B[PDF 结构化解析 wrap 成 Doc 块]
+        B --> C[xinggraph.add / remember];
+        C --> D[xinggraph.cognify];
+        D --> E{chunker 策略};
+        E -->|--chunker structured_doc| F[StructuredDocChunker];
+        E -->|TextChunker 等| G[常规切块];
+        F --> H["逐块入库 · 保留标题层级 metadata"];
+        G --> I[实体抽取 Entity · 关系建边];
+        H --> J[(Neo4j / 图存储)];
+        I --> J;
+    end
+    subgraph GRAPH[Knowledge Graph]
+        J --> K[Entity · DocumentChunk · Wiki 节点与边];
+    end
+```
 
-- Easily Build Company Brain - unify data from various sources in one place and enable Agents with your domain knowledge
-- Knowledge infrastructure — unified ingestion, graph/vector search, runs locally, ontology grounding, multimodal
-- Persistent and Learning Agents - learn from feedback, context management, cross-agent knowledge sharing
-- Reliable and Trustworthy Agents - agentic user/tenant isolation, traceability, OTEL collector, audit traits
+结构化 PDF 的 wrapper 格式（由 PDF 解析器产生）：
 
-### How it Works
+```
+Doc 1/5: len=4123, titles=[第一章 总体设计, 1.1 系统架构]
+--- 内容开始 ---
+<章节正文>
+--- 内容结束 ---
+```
 
-<p align="center">
-  <img src="assets/remember.svg" alt="XingGraph Products" width="80%" />
-</p>
+`StructuredDocChunker` 每块逐字保留 wrapper 原文，`titles` 层级、`doc_index`、`total_docs` 全部进入元数据，回答阶段可据此做精确标题归因。
 
-<p align="center">
-  <img src="assets/recall.svg" alt="XingGraph Recall" width="80%" />
-</p>
+### WIKI 渐进式检索 / Progressive retrieval pipeline
 
-## Basic Usage & Feature Guide
+```mermaid
+flowchart TB
+    Q["用户提问<br/>(多主体对比)"] --> S0;
+    subgraph STEP0_1[Step 0–1 · 理解与锚定]
+        S0["Step 0 LLM 抽取<br/>subjects + attributes<br/>(属性绑定主体)"];
+        S0 --> S1["Step 1 实体锚定<br/>subject 永不过滤 + 句子级匹配"];
+        S1 -.可并行分支.-> MH["model_hop<br/>产品→型号定向跳转"];
+        MH -.合并去重.-> S2;
+    end
+    S1 --> S2["Step 2 图遍历<br/>Entity → Chunk → Wiki"];
+    subgraph STEP2_5[Step 2–5 · 检索与回答]
+        S2 --> S3["Step 3 Wiki 向量扩展(可选)"];
+        S3 --> S4["Step 4 LLM Wiki 筛选<br/>只留能答的"];
+        S4 --> S5["Step 5 回答生成<br/>结构化对比 + 标题归因引用"];
+    end
+    S5 --> out["输出 trace + 引用来源"];
+```
 
-To learn more, [check out this short, end-to-end Colab walkthrough](https://colab.research.google.com/drive/1HRrzIvzcbwrESVfX76wJLKmtIg00SUga?usp=sharing) of XingGraph's core features.
+- 多主体查询（`subjects > 1`）自动把 `entity_top_k` 从 `8` 提至 `max(15, n×5)`，每个主体都有独立候选池，不会"只答到最大主体"。
+- 每个 retrieval 回传结构化 `trace`：`step0_llm_entities`（subjects/attributes）可被会话缓存复用，实现二次检索短路。
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1HRrzIvzcbwrESVfX76wJLKmtIg00SUga?usp=sharing)
+---
 
-## Quickstart
+## 为什么比 GraphRAG / 纯 LLM-wiki 更优 / Why It's Better
 
-Let’s try XingGraph in just a few lines of code.
+| 维度 | 纯 GraphRAG（微软式社区摘要） | 无向量 LLM-wiki 检索 | :star: xinggraph WIKI 渐进式 |
+|---|---|---|---|
+| **成本** | 全库 LLM 抽取 + 社区检测，一次可能烧大量 token | 低，但只做字面匹配 | 按需渐进，LLM 只在筛选/回答阶段使用，省 token |
+| **多主体对比** | 社区摘要易漏主体，对比全靠碰运气 | 纯文本匹配，无法横向对比 | **显式 subjects+attributes 抽取**，top_k 按主体数自动放大，结构化输出对比 |
+| **归因溯源** | 社区摘要，指不到具体章节 | 无结构，无法给出来源层级 | structured_doc 保留标题层级 → 回答引用「第一章/1.3」级标题 |
+| **语义一跳** | 有社区跳转，但粒度粗 | 无图，无多跳关系 | 实体锚定 + `model_hop` 精确沿产品→型号边走，型号自锚定不扩散 |
+| **可观测性** | 弱，黑盒 | 无 trace | **全流程结构化 trace**（step0 主体/属性 → 每步命中） |
+| **语义召回** | 向量 | 仅字面 | 实体向量锚定 + Wiki 向量扩展（可选），字面+语义双保险 |
 
-### Prerequisites
+一段话总结：
 
-- Python 3.10 to 3.14
+> 纯 GraphRAG 用"全局离线摘要"换全局问题能力，代价是贵、慢、难溯源；无向量 LLM-wiki 用"省事"换掉多跳与对比能力，容易漏主体、答不齐。
+> XingGraph 取中间路线：**实体锚定 + 图遍历 + Wiki 向量扩展 + LLM 筛选** 走有向的、可观测的、按需加深的检索路径 —— 问得越具体，路走得越省；问得越宽（多主体），自动加深加宽，还能把每一步的证据链还给你。
 
-### Step 1: Install XingGraph
+---
 
-You can install XingGraph with **pip**, **poetry**, **uv**, or your preferred Python package manager.
+## 安装 / Installation
+
+要求 Python >= 3.10 且 < 3.14，推荐 `uv`：
 
 ```bash
-uv pip install xinggraph
+uv sync --dev --all-extras --reinstall
 ```
 
-### Step 2: Configure the LLM
-```python
-import os
-os.environ["LLM_API_KEY"] = "YOUR OPENAI_API_KEY"
+> 中文备注：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
+
+---
+
+## 快速开始（CLI）/ Quickstart
+
+```bash
+uv run xinggraph-cli add "XingGraph turns documents into AI memory."
+uv run xinggraph-cli cognify
+uv run xinggraph-cli search "What does xinggraph do?"
+uv run xinggraph-cli recall "Compare platform A vs B" --search-type WIKI_COMPLETION
 ```
-Alternatively, create a `.env` file using our [template](https://github.com/xing-kj/xinggraph/blob/main/.env.template).
 
-To integrate other LLM providers, see our [LLM Provider Documentation](https://docs.xinggraph.ai/setup-configuration/llm-providers).
+常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 
-### Step 3: Run the Pipeline
+> 中文备注：`search` 是通用检索；`recall` 是面向记忆的回答式入口，`search_type` 留空时自动选最优策略。
 
-XingGraph's API gives you four operations — `remember`, `recall`, `forget`, and `improve`:
+---
+
+## ⭐ WIKI 多主体搜索 / Wiki Multi-subject Search
+
+对"多主体、要对比、要溯源"的问题最有效。HTTP 直接指定：
+
+```bash
+curl -X POST http://localhost:8000/v1/recall \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "search_type": "WIKI_COMPLETION",
+    "query": "对比 A 卡奥斯工业互联网平台 与 B 卡奥斯的差异,以及与 C 的关系",
+    "top_k": 15,
+    "include_references": true
+  }'
+```
+
+Python SDK：
 
 ```python
-import xinggraph
 import asyncio
+import xinggraph
 
 
 async def main():
-    # Store permanently in the knowledge graph (runs add + cognify + improve)
-    await xinggraph.remember("XingGraph turns documents into AI memory.")
-
-    # Store in session memory (fast cache, syncs to graph in background)
-    await xinggraph.remember("User prefers detailed explanations.", session_id="chat_1")
-
-    # Query with auto-routing (picks best search strategy automatically)
-    results = await xinggraph.recall("What does XingGraph do?")
-    for result in results:
-        print(result)
-
-    # Query session memory first, fall through to graph if needed
-    results = await xinggraph.recall("What does the user prefer?", session_id="chat_1")
-    for result in results:
-        print(result)
-
-    # Delete when done
-    await xinggraph.forget(dataset="main_dataset")
+    results = await xinggraph.recall(
+        query="对比三家企业的多智能体体系差异",
+        search_type="WIKI_COMPLETION",
+        top_k=15,
+        include_references=True,
+    )
+    for r in results:
+        print(r.answer[:500])
 
 
-if __name__ == '__main__':
-    asyncio.run(main())
-
+asyncio.run(main())
 ```
 
-### Use the XingGraph CLI
-
-```bash
-xinggraph-cli remember "XingGraph turns documents into AI memory."
-
-xinggraph-cli recall "What does XingGraph do?"
-
-xinggraph-cli forget --all
-```
-
-To open the local UI, run:
-```bash
-xinggraph-cli -ui
-```
-
-> **Note:** The MCP server launched by `xinggraph-cli -ui` runs inside a Docker container.
-> Docker Desktop, Colima, or any OCI-compatible runtime with a working `docker` CLI is
-> required. See [Docker & Colima Setup](docs/docker-colima-setup.md) for details.
-
-## Run with Docker
-
-Prefer containers? XingGraph publishes prebuilt images to Docker Hub on every push to `main`:
-[`xinggraph/xinggraph`](https://hub.docker.com/r/xinggraph/xinggraph) (the API server) and
-[`xinggraph/xinggraph-mcp`](https://hub.docker.com/r/xinggraph/xinggraph-mcp) (the MCP server).
-
-### Option A — Docker Compose (build from source)
-
-Clone the repo, create a `.env` with at least `LLM_API_KEY`, then:
-
-```bash
-cp .env.template .env   # then edit .env and set LLM_API_KEY
-
-# Start the API server (http://localhost:8000)
-docker compose up
-
-# Optional profiles (combine as needed):
-docker compose --profile ui up        # + frontend on http://localhost:3000
-docker compose --profile mcp up       # + MCP server on http://localhost:8001
-docker compose --profile postgres up  # + Postgres/PGVector
-docker compose --profile neo4j up     # + Neo4j
-```
-
-> The `xinggraph` and `xinggraph-mcp` services publish different host ports (`8000` vs `8001`),
-> so you can run both at once.
-
-### Option B — Pull the prebuilt image (no clone required)
-
-```bash
-# Create a minimal .env in the current directory
-echo 'LLM_API_KEY="YOUR_OPENAI_API_KEY"' > .env
-
-# API server
-docker run --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph:main
-
-# MCP server (HTTP transport)
-docker pull xinggraph/xinggraph-mcp:main
-docker run -e TRANSPORT_MODE=http --env-file ./.env -p 8000:8000 --rm -it xinggraph/xinggraph-mcp:main
-```
-
-See the [MCP server README](xinggraph-mcp/README.md) for SSE/stdio transports, optional
-extras, and MCP client configuration.
-
-## Use with AI Agents
-
-### Claude Code
-
-Install the [XingGraph memory plugin](https://github.com/xing-kj/xinggraph-integrations/tree/main/integrations/claude-code) to give Claude Code persistent memory across sessions. The plugin captures prompts, tool traces, and assistant responses into session memory, injects relevant context on every prompt, and syncs session memory into the permanent knowledge graph at session end.
-
-**Install** from the Claude Code marketplace. The recommended way is from your shell, *before* launching Claude Code, so the first `claude` launch is a clean session that bootstraps memory automatically:
-
-```bash
-# Add the marketplace and install the plugin (one-time, user-scoped)
-claude plugin marketplace add xing-kj/xinggraph-integrations
-claude plugin install xinggraph-memory@xinggraph
-
-# Set env vars for your mode (see below), then launch
-export LLM_API_KEY="sk-..."   # local mode; or XINGGRAPH_BASE_URL + XINGGRAPH_API_KEY for cloud
-claude
-```
-
-**Local mode** (default) — the plugin bootstraps a local XingGraph API at `http://localhost:8011`. Only `LLM_API_KEY` is required; the XingGraph API key is auto-minted if absent:
-
-```bash
-export LLM_API_KEY="sk-..."
-```
-
-**XingGraph Cloud or a remote server** — set both:
-
-```bash
-export XINGGRAPH_BASE_URL="https://your-instance.xinggraph.ai"
-export XINGGRAPH_API_KEY="ck_..."
-```
-
-On startup you should see a "XingGraph Memory Connected" system message.
-
-The plugin hooks into Claude Code's lifecycle — `SessionStart` selects mode and sets up identity, `UserPromptSubmit` injects dataset-scoped context, `PostToolUse` captures tool traces, `Stop` writes the assistant's answer, `PreCompact` preserves memory across context resets, and `SessionEnd` triggers the final sync into the permanent graph.
-
-See the [plugin README](https://github.com/xing-kj/xinggraph-integrations/tree/main/integrations/claude-code) for sessions, datasets, and full configuration.
-
-### Connect to XingGraph Cloud
-
-Point any Python agent at a managed XingGraph instance — all SDK calls route to the cloud:
-
-```python
-import xinggraph
-
-await xinggraph.serve(url="https://your-instance.xinggraph.ai", api_key="ck_...")
-
-await xinggraph.remember("important context")
-results = await xinggraph.recall("what happened?")
-
-await xinggraph.disconnect()
-```
-
-## Examples
-
-Browse more examples in the [`examples/`](examples/) folder — demos, guides, custom pipelines, and database configurations.
-
-**Use Case 1 — Customer Support Agent**
-
-```python
-Goal: Resolve customer issues using their personal data across finance, support, and product history.
-
-User: "My invoice looks wrong and the issue is still not resolved."
-
-XingGraph tracks: past interactions, failed actions, resolved cases, product history
-
-# Agent response:
-Agent: "I found 2 similar billing cases resolved last month.
-        The issue was caused by a sync delay between payment
-        and invoice systems — a fix was applied on your account."
-
-# What happens under the hood:
-- Unifies data sources from various company channels
-- Reconstructs the interaction timeline and tracks outcomes
-- Retrieves similar resolved cases
-- Maps to the best resolution strategy
-- Updates memory after execution so the agent never repeats the same mistake
-```
-
-**Use Case 2 — Expert Knowledge Distillation (SQL Copilot)**
-
-```python
-Goal: Help junior analysts solve tasks by reusing expert-level queries, patterns, and reasoning.
-
-User: "How do I calculate customer retention for this dataset?"
-
-XingGraph tracks: expert SQL queries, workflow patterns, schema structures, successful implementations
-
-# Agent response:
-Agent: "Here's how senior analysts solved a similar retention query.
-        XingGraph matched your schema to a known structure and adapted
-        the expert's logic to fit your dataset."
-
-# What happens under the hood:
-- Extracts and stores patterns from expert SQL queries and workflows
-- Maps the current schema to previously seen structures
-- Retrieves similar tasks and their successful implementations
-- Adapts expert reasoning to the current context
-- Updates memory with new successful patterns so junior analysts perform at near-expert level
-```
-
-## Run the Whole Memory Layer on Postgres
-
-Graph memory traditionally means operating a stack — a graph database for relationships, a vector database for embeddings, Redis for sessions, and a relational database for metadata — all deployed, secured, and paid for before an agent remembers anything. In xinggraph 1.0 you can run the entire memory layer on a single Postgres instance.
-
-| Memory layer | Traditional stack | xinggraph on Postgres |
-| --- | --- | --- |
-| Relationships | Neo4j or another graph database | xinggraph's Postgres graph backend |
-| Embeddings | Dedicated vector database | pgvector |
-| Sessions | Redis | SQL session-cache backend |
-| Metadata | Relational database | same Postgres |
-
-The graph still exists — it just lives inside the same Postgres-backed memory layer as the text, metadata, and embeddings, so retrieval moves between similarity and structure without crossing service boundaries. In our CI benchmarks, Postgres search ran ~10% faster than the separate graph-plus-vector setup.
-
-Postgres is the default we recommend for most deployments, but you can still swap in dedicated backends when a workload needs them (Neo4j and Neptune for graphs, Redis for sessions, pgvector and LanceDB for vectors, plus Qdrant, ChromaDB, Weaviate, and Milvus via community adapters). Local development stays fully embedded — SQLite, LanceDB, and Kuzudb — with no extra services to stand up.
-
-```bash
-pip install "xinggraph[postgres]"
-```
-
-```bash
-DB_PROVIDER=postgres
-VECTOR_DB_PROVIDER=pgvector
-GRAPH_DATABASE_PROVIDER=postgres
-CACHE_BACKEND=postgres
-
-DB_HOST=localhost
-DB_PORT=5432
-DB_USERNAME=xinggraph
-DB_PASSWORD=xinggraph
-DB_NAME=xinggraph_db
-```
-
-## Deploy XingGraph
-
-Use [XingGraph Cloud](https://www.xinggraph.ai) for a fully managed experience, or self-host with one of the 1-click deployment configurations below.
-
-| Platform | Best For | Command |
-|----------|----------|---------|
-| **XingGraph Cloud** | Managed service, no infrastructure to maintain | [Sign up](https://www.xinggraph.ai) or `await xinggraph.serve()` |
-| **Modal** | Serverless, auto-scaling, GPU workloads | `bash distributed/deploy/modal-deploy.sh` |
-| **Railway** | Simplest PaaS, native Postgres | `railway init && railway up` |
-| **Fly.io** | Edge deployment, persistent volumes | `bash distributed/deploy/fly-deploy.sh` |
-| **Render** | Simple PaaS with managed Postgres | Deploy to Render button |
-| **Daytona** | Cloud sandboxes (SDK or CLI) | See `distributed/deploy/daytona_sandbox.py` |
-| **Islo** | Isolated cloud sandboxes (SDK) | See `distributed/deploy/islo_sandbox.py` |
-
-See the [`distributed/`](distributed/) folder for deploy scripts, worker configurations, and additional details.
-
-## Use XingGraph in Other Languages
-
-Prefer something other than Python? XingGraph also ships official clients for Rust and TypeScript.
-
-### Getting Started with Rust
-
-Use the [xinggraph-rs](https://github.com/xing-kj/xinggraph-rs) crate to add, cognify, and search from Rust.
-
-```bash
-cargo add xinggraph
-```
-
-See the [xinggraph-rs repository](https://github.com/xing-kj/xinggraph-rs) for full setup and examples.
-
-### Getting Started with TypeScript
-
-Use the [@xinggraph/xinggraph-ts](https://www.npmjs.com/package/@xinggraph/xinggraph-ts) package to add, cognify, and search from Node.js or the browser.
-
-```bash
-npm install @xinggraph/xinggraph-ts
-```
-
-See the [@xinggraph/xinggraph-ts package](https://www.npmjs.com/package/@xinggraph/xinggraph-ts) for full setup and examples.
-
-## Benchmarks
-
-We ran xinggraph against [BEAM](https://github.com/mohammadtavakoli78/BEAM), a long-context benchmark that tests whether a system can keep track of a long conversation as it changes — a more useful test for agent memory than typical needle-in-a-haystack benchmarks. Using only xinggraph's default settings and standard open-source features (no custom models, no BEAM-specific pipelines), we beat the previous state of the art at the 100K-token setting and matched it at 10M tokens.
-
-| Benchmark | Setting | xinggraph | Previous SOTA | Obsidian / RAG baseline |
-|-----------|---------|--------|---------------|--------------------------|
-| BEAM | 100K tokens | **0.79** (>0.8 with per-question routing) | 0.735 | ~0.33 |
-| BEAM | 10M tokens | **0.67** | 0.641 | ~0.33 |
-
-These numbers are a directional signal rather than a definitive measure — see the [BEAM preliminary report](xinggraph/eval_framework/beam/REPORT.md) for the full methodology, caveats, and what the results actually mean.
-
-## Latest News
-
-[![Watch Demo](https://img.youtube.com/vi/8hmqS2Y5RVQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=8hmqS2Y5RVQ&t=13s)
-
-
-## Community & Support
-
-### Contributing
-We welcome contributions from the community! Your input helps make XingGraph better for everyone. See [`CONTRIBUTING.md`](CONTRIBUTING.md) to get started.
-
-### Code of Conduct
-
-We're committed to fostering an inclusive and respectful community. Read our [Code of Conduct](https://github.com/xing-kj/xinggraph/blob/main/CODE_OF_CONDUCT.md) for guidelines.
-
-## Research & Citation
-
-We recently published a research paper on optimizing knowledge graphs for LLM reasoning:
-
-```bibtex
-@misc{xinggraph2025optimizinginterfaceknowledgegraphs,
-      title={Optimizing the Interface Between Knowledge Graphs and LLMs for Complex Reasoning},
-      author={XingGraph Contributors},
-      year={2025},
-      eprint={2505.24478},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2505.24478},
+> 中文备注：`"search_type": null` 触发自动路由；显式写 `WIKI_COMPLETION` 则绕过 selector 直走 WIKI 管线。
+
+### 检索 trace
+
+```json
+{
+  "retriever": "WikiCompletionRetriever",
+  "retrieval_mode": "wiki_first",
+  "step0_llm_entities": {
+    "subjects": ["A", "B", "C"],
+    "attributes": [{"term": "多智能体体系", "subject": "A"}]
+  }
 }
 ```
+
+多主体查询自动放大 `entity_top_k`（见工作原理解释），保证每个主体都有独立候选池，避免"只答到最大主体"。
+
+---
+
+## ⭐ structured_doc 建图与标题归因 / Graph Building with Title Attribution
+
+### 建图
+
+```bash
+uv run xinggraph-cli add --path ./parsed_manual.pdf
+uv run xinggraph-cli cognify --chunker structured_doc --chunk-size 2048
+```
+
+```python
+import asyncio
+import xinggraph
+
+
+async def main():
+    await xinggraph.add("parsed_manual.pdf")   # 支持 PDF 解析 wrapper 源文件
+    await xinggraph.cognify(
+        chunker="structured_doc",             # 逐 Doc 块入库，保留标题层级
+        chunk_size=2048,
+    )
+
+
+asyncio.run(main())
+```
+
+### 标题归因
+
+用 structured_doc 建图的数据集在推理时**自动**使用专用 prompt
+（`answer_simple_question_structured_doc.txt`），回答会带上原始文档小标题作为来源：
+
+```
+Q: 系统架构里哪一层负责鉴权？
+A: 详见「第一章 总体设计」中的「1.3 安全设计」：鉴权层由 ……（引用自该节）
+```
+
+无需手工配置 — `get_search_type_retriever_instance` 按数据集实际 chunker 自动切换
+`system_prompt` 与 `system_prompt_path`。
+
+---
+
+## API 速查 / API Reference
+
+| 端点 | 用途 | 关键参数 |
+|---|---|---|
+| `POST /v1/remember` | 记一条内容并建图 | `text`, `dataset` |
+| `POST /v1/add` | 添加文档/文件 | `document`, `dataset` |
+| `POST /v1/cognify` | 执行切块+实体抽取+建图 | `chunker`, `chunk_size` |
+| `POST /v1/search` | 通用检索 | `search_type`, `query` |
+| `POST /v1/recall` | 面向记忆的回答式召回 | `search_type(WIKI_COMPLETION)`, `query`, `include_references` |
+| `GET  /v1/recall` | 检索历史 | — |
+
+`search_type` 可用值（节选）：`SUMMARIES`、`CHUNKS`、`RAG_COMPLETION`、`HYBRID_COMPLETION`、
+`TRIPLET_COMPLETION`、`GRAPH_COMPLETION`、`GRAPH_COMPLETION_DECOMPOSITION`、
+`AGENTIC_COMPLETION`、`WIKI_COMPLETION`。
+
+---
+
+## 项目结构 / Project Structure
+
+```
+xinggraph/                     # 核心 Python 库
+  api/                         # FastAPI 版本化路由
+  cli/                         # CLI 入口与子命令
+  infrastructure/              # 数据库 / LLM / embeddings / storage
+  modules/
+    chunking/                  # 切分器（含 StructuredDocChunker）
+    retrieval/                 # 检索器（含 WikiCompletionRetriever）
+    search/                    # 搜索类型路由
+    ontology/  users/          # 本体 / 用户与权限
+  tasks/                       # 可复用任务（chunks 等）
+  tests/                       # 单测 / 集成 / CLI / E2E
+xinggraph-mcp/                 # MCP 服务（stdio / SSE / HTTP）
+xinggraph-frontend/            # Next.js 本地演示 UI
+examples/                      # 公开 API 示例脚本
+```
+
+---
+
+## 开发命令 / Development
+
+```bash
+uv run pytest xinggraph/tests/unit/ -v
+uv run pytest xinggraph/tests/integration/ -v
+uv run ruff check .
+uv run ruff format .
+uv run python -m xinggraph.api.client  # 启动 FastAPI server
+```
+
+> 中文备注：新增公开 API 时请同步在 `examples/python/` 补示例；CI 与本机命令一致。
