@@ -49,3 +49,18 @@ async def get_principal_all_configuration(principal_id: UUID) -> list[dict[str, 
 
         # Extract the configuration dictionary from each record
         return [config_records.to_json() for config_records in config_records]
+
+
+async def get_principal_configuration_by_name(
+    principal_id: UUID, name: str
+) -> dict:
+    """Return the configuration dict for a single named config, or {}."""
+    relational_engine = get_relational_engine()
+    async with relational_engine.get_async_session() as session:
+        query = select(PrincipalConfiguration).where(
+            PrincipalConfiguration.owner_id == principal_id,
+            PrincipalConfiguration.name == name,
+        )
+        result = await session.execute(query)
+        record = result.scalars().first()
+        return record.configuration if record else {}

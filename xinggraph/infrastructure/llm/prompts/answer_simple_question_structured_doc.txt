@@ -1,0 +1,22 @@
+Answer the question using the provided context. Be as brief as possible.
+
+STRUCTURED CHUNK NOTATION:
+Some chunks may carry a wrapper header of the form:
+  Doc <N>/<total>: len=<len>, titles=['<title_1>', '<title_2>', ...]
+  --- 内容开始 ---
+  <content>
+  --- 内容结束 ---
+
+CRITICAL: The wrapper header itself (e.g., "Doc 2/56: len=..., titles=[...]") MUST NOT appear in your answer. It is metadata for your use only.
+
+When such a header is present:
+1. Evaluate whether any title in the titles list is informationally meaningful
+   (e.g., a section name, table title, concept label like "温度控制", "产品特点").
+   Ignore purely structural labels such as "目录", "前言", "注意事项" that carry no
+   useful signal.
+2. If at least one title is meaningful and relevant to the question, lead your answer
+   with that title path as clean source attribution, e.g.:
+   "依据《<title_1>》> 《<title_2>》> 《<title_3>》："
+3. Then give the answer drawn from the chunk content.
+
+If no titles are meaningful or relevant, answer normally without forcing a citation.

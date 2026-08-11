@@ -1,5 +1,6 @@
 import os
 from typing import Callable, List, Optional, Type, Tuple
+from uuid import UUID
 
 from xinggraph.base_config import get_base_config
 from xinggraph.modules.retrieval.base_retriever import BaseRetriever
@@ -33,6 +34,9 @@ from xinggraph.modules.retrieval.cypher_search_retriever import CypherSearchRetr
 from xinggraph.modules.retrieval.natural_language_retriever import NaturalLanguageRetriever
 from xinggraph.modules.retrieval.agentic_retriever import AgenticRetriever
 from xinggraph.modules.retrieval.wiki_completion_retriever import WikiCompletionRetriever
+from xinggraph.modules.users.methods.get_principal_configuration import (
+    get_principal_configuration_by_name,
+)
 from xinggraph.context_global_variables import session_user
 
 
@@ -62,6 +66,22 @@ async def get_search_type_retriever_instance(
     top_k = kwargs.get("top_k", 15)
     system_prompt_path = kwargs.get("system_prompt_path", "answer_simple_question.txt")
     system_prompt = kwargs.get("system_prompt")
+
+    # If no explicit system_prompt was provided, check whether the dataset was
+    # ingested with structured_doc chunking. If so, use the dedicated answer
+    # prompt that teaches the LLM to leverage the chunk titles as source
+    # attribution instead of dumping raw wrapper headers into the reply.
+    if not system_prompt:
+        dataset = kwargs.get("dataset")
+        user = kwargs.get("user")
+        if dataset and user:
+            chunker = await _get_dataset_chunker_assignment(user.id, str(dataset.id))
+            if chunker == "structured_doc":
+                from xinggraph.infrastructure.llm.prompts import read_query_prompt
+                structured_prompt = read_query_prompt("answer_simple_question_structured_doc.txt")
+                if structured_prompt:
+                    system_prompt = structured_prompt
+                    system_prompt_path = "answer_simple_question_structured_doc.txt"
     node_type = kwargs.get("node_type", NodeSet)
     node_name = kwargs.get("node_name")
     node_name_filter_operator = kwargs.get("node_name_filter_operator", "OR")
@@ -420,3 +440,12 @@ async def get_search_type_retriever_instance(
         retriever_instance = retriever_cls(**retriever_args)
 
     return retriever_instance
+
+
+async def _get_dataset_chunker_assignment(user_id: UUID, dataset_id: str) -> str | None:
+    """Return the chunker name assigned to a dataset for a user, or None."""
+    config = await get_principal_configuration_by_name(user_id, "graph-models")
+    if not config:
+        return None
+    assignments = config.get("chunkerAssignments") or {}
+    return assignments.get(dataset_id)
