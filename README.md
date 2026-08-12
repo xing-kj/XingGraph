@@ -1,3 +1,20 @@
+<p align="center">
+  <img src="assets/banner.svg" width="100%" alt="XingGraph — Knowledge-Graph RAG" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-6b4fb0?logo=python&logoColor=white&style=for-the-badge" alt="Python"/>
+  <img src="https://img.shields.io/badge/Neo4j-GraphDB-4f7bdd?logo=neo4j&logoColor=white&style=for-the-badge" alt="Neo4j"/>
+  <img src="https://img.shields.io/badge/GraphRAG-Knowledge--Graph-a974ff?style=for-the-badge" alt="GraphRAG"/>
+  <img src="https://img.shields.io/badge/Ontology-RDF%2FOWL-a974ff?style=for-the-badge" alt="Ontology"/>
+  <img src="https://img.shields.io/badge/MCP-Model--Context--Protocol-6b4fb0?logo=modelcontextprotocol&logoColor=white&style=for-the-badge" alt="MCP"/>
+  <img src="https://img.shields.io/badge/FastAPI-API-4f7bdd?logo=fastapi&logoColor=white&style=for-the-badge" alt="FastAPI"/>
+</p>
+
+<p align="center">
+  <img src="assets/principles-ring.svg" width="100%" alt="XingGraph 七项设计原则" />
+</p>
+
 # XingGraph
 
 知识图谱驱动的 AI 记忆与检索系统 — 让 LLM 从「文档堆」进化到「会回答、会对比、会溯源，还给你看证据」。
@@ -14,6 +31,7 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 
 ## 目录 / Contents
 
+- [七项设计原则](#七项设计原则--seven-design-principles)
 - [核心特性](#核心特性--core-features)
 - [一个例子看懂它](#一个例子看懂它--one-example-to-see-it)
 - [工作原理](#工作原理--how-it-works)
@@ -25,6 +43,20 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 - [API 速查](#api-速查--api-reference)
 - [项目结构](#项目结构--project-structure)
 - [开发命令](#开发命令--development)
+
+---
+
+## 七项设计原则 / Seven Design Principles
+
+| Principle | What it means |
+|---|---|
+| 🔍 可观测 | 每步检索写入结构化 trace，可实时盯住跳转路径 |
+| 📌 可回溯 | 回答带标题归因 + references，指回原文章节 |
+| 🎛 可控制 | 路由 / scope / 节点过滤 / 开关全可接管 |
+| 🧩 可扩展 | RDF/OWL 本体即扩展点，业务术语可扩充 |
+| 🌱 可进化 | 自建提示词与切分方式 + 反馈影响检索权重 |
+| 💰 省 token | subject 文档白名单硬过滤，他文不入上下文 |
+| 🛡 少幻觉 | 答案绑定原文 chunk，回传参考片段 |
 
 ---
 

@@ -1,0 +1,56 @@
+<svg viewBox="0 0 1000 210" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title>XingGraph — Knowledge-Graph RAG</title>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0a0a1a"/>
+<stop offset="0.5" stop-color="#141032"/>
+<stop offset="1" stop-color="#0a0a1a"/>
+</linearGradient>
+<linearGradient id="band" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#6b4fb0" stop-opacity="0"/>
+<stop offset="0.2" stop-color="#8a5cf6" stop-opacity="0.85"/>
+<stop offset="0.5" stop-color="#4f7bdd" stop-opacity="0.9"/>
+<stop offset="0.8" stop-color="#8a5cf6" stop-opacity="0.85"/>
+<stop offset="1" stop-color="#6b4fb0" stop-opacity="0"/>
+</linearGradient>
+<linearGradient id="txt" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#e8e0ff"/>
+<stop offset="0.55" stop-color="#ffffff"/>
+<stop offset="1" stop-color="#bcd2ff"/>
+</linearGradient>
+<filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+
+<rect x="0" y="0" width="1000" height="210" fill="url(#bg)"/>
+
+<circle cx="150" cy="40" r="120" fill="#4f7bdd" opacity="0.12"/>
+<circle cx="880" cy="180" r="150" fill="#6b4fb0" opacity="0.14"/>
+
+<g stroke="url(#band)" stroke-width="3" fill="none" stroke-linecap="round">
+<path d="M -40 150 C 180 90, 360 205, 540 140 S 860 60, 1040 130"/>
+<path d="M -40 60 C 180 120, 360 10, 540 75 S 860 150, 1040 85" opacity="0.55"/>
+</g>
+<g stroke="url(#band)" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.35">
+<path d="M -40 185 C 220 120, 420 230, 620 165 S 900 105, 1040 170"/>
+</g>
+
+<g fill="#ffffff">
+<circle cx="80" cy="30" r="2" opacity="0.7"/>
+<circle cx="210" cy="175" r="1.6" opacity="0.5"/>
+<circle cx="330" cy="50" r="1.4" opacity="0.6"/>
+<circle cx="470" cy="180" r="2" opacity="0.45"/>
+<circle cx="600" cy="35" r="1.6" opacity="0.65"/>
+<circle cx="720" cy="185" r="1.8" opacity="0.5"/>
+<circle cx="850" cy="55" r="1.4" opacity="0.6"/>
+<circle cx="940" cy="170" r="2" opacity="0.5"/>
+</g>
+
+<text x="500" y="95" font-size="52" font-weight="800" fill="url(#txt)" text-anchor="middle" filter="url(#glow)">XingGraph</text>
+<text x="500" y="128" font-size="17" font-weight="600" fill="#cdc3f2" text-anchor="middle" letter-spacing="3">KNOWLEDGE-GRAPH RAG</text>
+<text x="500" y="152" font-size="13" fill="#9b93ab" text-anchor="middle" letter-spacing="1">AI memory &amp; retrieval engine · traceable answers · ontology-driven</text>
+
+<circle cx="500" cy="172" r="1.5" fill="#a974ff" opacity="0.9">
+<animate attributeName="r" values="1.5;6;6" keyTimes="0;0.5;1" dur="3s" repeatCount="indefinite"/>
+<animate attributeName="opacity" values="0.9;0;0" keyTimes="0;0.5;1" dur="3s" repeatCount="indefinite"/>
+</circle>
+</svg>
