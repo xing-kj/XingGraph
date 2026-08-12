@@ -1,0 +1,74 @@
+<svg viewBox="0 0 760 580" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title>XingGraph 七项能力雷达</title>
+<desc>Seven capability radar: observable, traceable, controllable, extensible, evolvable, token-efficient, low-hallucination.</desc>
+<defs>
+<filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<linearGradient id="capfill" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#b98cff" stop-opacity="0.42"/>
+<stop offset="100%" stop-color="#6b4fb0" stop-opacity="0.14"/>
+</linearGradient>
+</defs>
+
+<rect x="0" y="0" width="760" height="580" fill="#0a0a0d"/>
+<text x="40" y="42" font-size="21" font-weight="700" fill="#f3f0fa">Design Principles · 七项设计能力</text>
+<rect x="42" y="52" width="46" height="3" rx="1.5" fill="#a974ff"/>
+
+<g stroke="#2a2340" stroke-width="1">
+<polygon points="380,163 498,225 535,330 454,425 306,425 225,330 262,225" fill="none"/>
+<polygon points="380,116 492,182 527,296 457,398 303,398 233,296 268,182" fill="none"/>
+<polygon points="380,69 486,139 519,262 460,371 300,371 241,262 274,139" fill="none"/>
+</g>
+
+<g stroke="#3f3560" stroke-width="1.2">
+<line x1="380" y1="300" x2="380" y2="110"/>
+<line x1="380" y1="300" x2="528" y2="181"/>
+<line x1="380" y1="300" x2="565" y2="342"/>
+<line x1="380" y1="300" x2="462" y2="471"/>
+<line x1="380" y1="300" x2="298" y2="471"/>
+<line x1="380" y1="300" x2="195" y2="342"/>
+<line x1="380" y1="300" x2="231" y2="181"/>
+</g>
+
+<polygon points="380,129 517,191 543,337 450,445 310,445 232,334 246,193"
+ fill="url(#capfill)" stroke="#a974ff" stroke-width="2.2" stroke-linejoin="round"/>
+
+<g fill="#d9bcff">
+<circle cx="380" cy="129" r="5" filter="url(#glow)"/>
+<circle cx="517" cy="191" r="5" filter="url(#glow)"/>
+<circle cx="543" cy="337" r="5" filter="url(#glow)"/>
+<circle cx="450" cy="445" r="5" filter="url(#glow)"/>
+<circle cx="310" cy="445" r="5" filter="url(#glow)"/>
+<circle cx="232" cy="334" r="5" filter="url(#glow)"/>
+<circle cx="246" cy="193" r="5" filter="url(#glow)"/>
+</g>
+
+<g font-size="14" font-weight="700" fill="#f3f0fa" text-anchor="middle">
+<text x="380" y="64">可观测</text>
+<text x="556" y="173">可回溯</text>
+<text x="608" y="330">可控制</text>
+<text x="474" y="505">可扩展</text>
+<text x="286" y="505">可进化</text>
+<text x="152" y="330">省token</text>
+<text x="203" y="173">少幻觉</text>
+</g>
+
+<g font-size="11" fill="#9b93ab" text-anchor="middle">
+<text x="380" y="82">trace + OTEL</text>
+<text x="560" y="152">标题归因 + refs</text>
+<text x="640" y="352">路由 / scope / 开关</text>
+<text x="470" y="524">RDF 本体即扩展点</text>
+<text x="290" y="524">prompt/chunker + 反馈</text>
+<text x="120" y="352">白名单硬过滤</text>
+<text x="182" y="152">原文 chunk + 证据</text>
+</g>
+
+<g font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#c4a6ff" text-anchor="middle">
+<text x="380" y="120">90%</text>
+<text x="505" y="180">92%</text>
+<text x="543" y="326">88%</text>
+<text x="450" y="436">85%</text>
+<text x="310" y="436">80%</text>
+<text x="225" y="323">95%</text>
+<text x="246" y="184">90%</text>
+</g>
+</svg>
