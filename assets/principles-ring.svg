@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 840 660" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-<title>xing-kj — Seven Design Principles</title>
-<desc>Seven design principles of XingGraph radiating from the center: observable, traceable, controllable, extensible, evolvable, token-efficient, low-hallucination.</desc>
+<svg viewBox="0 0 840 660" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title id="title">xing-kj — Seven Design Principles</title>
+<desc id="desc">Seven design principles of XingGraph radiating from the center: observable, traceable, controllable, extensible, evolvable, token-efficient, low-hallucination.</desc>
 <defs>
 <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 <filter id="softglow" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 760 440" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-<title>search() sparse graph triggers clarification, dense graph produces answer</title>
-<desc>User asks vague question; sparse graph triggers rejection badge and clarification; after specifying DW-30L818, dense graph produces answer.</desc>
+<svg viewBox="0 0 760 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title id="title">search() sparse graph triggers clarification, dense graph produces answer</title>
+<desc id="desc">User asks vague question; sparse graph triggers rejection badge and clarification; after specifying DW-30L818, dense graph produces answer.</desc>
 
 <defs>
 <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>

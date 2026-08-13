@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" width="100%" alt="XingGraph — Knowledge-Graph RAG" />
+  <img src="assets/readme/hero.svg" width="100%" alt="XingGraph — Knowledge-Graph RAG · 六层管线 Document→Chunk→Wiki→Entity→Type→Summary" />
 </p>
 
 <p align="center">
@@ -12,22 +12,8 @@
 </p>
 
 <p align="center">
-  <img src="assets/principles-ring.svg" width="100%" alt="XingGraph 七项设计原则" />
+  <em>知识图谱驱动的 AI 记忆与检索系统 · <a href="https://github.com/xing-kj/XingGraph">English README</a> follows the same content.</em>
 </p>
-
-# XingGraph
-
-知识图谱驱动的 AI 记忆与检索系统 — 让 LLM 从「文档堆」进化到「会回答、会对比、会溯源，还给你看证据」。
-_AI memory & retrieval engine built on a knowledge graph — from raw documents to answers that compare, cross-reference, and show their sources._
-
-> **关键词 / Keywords**：`知识图谱 (Knowledge Graph)` · `RAG (Retrieval-Augmented Generation)` · `本体 (Ontology, RDF/OWL)` · `渐进式检索 (Progressive Retrieval)` · `结构化建图 (Structured Chunking)` · `标题归因 (Title Attribution)` · `多主体对比 (Multi-subject Comparison)` · `MCP` · `FastAPI`
-
-> 核心亮点 / Highlights
->
-> - **WIKI 多主体渐进式检索** (`WIKI_COMPLETION`)：把一句"软件测评式"提问自动拆成多个主体，实体锚定 → 图遍历 → Wiki 汇总 → LLM 筛选 → 回答，支持跨主体横向对比。
-> - **structured_doc 结构化建图**：按 PDF 解析后的 `Doc N/total` 结构切块入图，保留标题层级；回答时自动启用**标题归因** prompt，引用来源章节而非原始 wrapper 头。
-> - **model_hop 产品型号定向跳转**：只沿 `is_product → is_a PRODUCT_MODEL` 走，问一个型号绝不扩散到姊妹型号。
-> - **`search_type: null` 自动路由** + 会话缓存 / 多租户隔离 / 全程检索 trace。
 
 ---
 
@@ -35,16 +21,10 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 
 - [七项设计原则](#七项设计原则--seven-design-principles)
 - [谁在用](#谁在用--who-its-for)
-- [核心特性](#核心特性--core-features)
 - [一个例子看懂它](#一个例子看懂它--one-example-to-see-it)
 - [图谱展示：看得懂才叫好](#图谱展示看得懂才叫好--graph-visualization-readable-not-flashy)
 - [工作原理](#工作原理--how-it-works)
-- [为什么比 GraphRAG / 纯 LLM-wiki 更优](#为什么比-graphrag--纯-llm-wiki-更优--why-its-better-than-graphrag-and-vectorless-llmwiki)
-- [安装](#安装--installation)
-- [快速开始（CLI）](#快速开始cli--quickstart)
-- [⭐ WIKI 多主体搜索](#-wiki-多主体搜索--wiki-multi-subject-search)
-- [⭐ structured_doc 建图与标题归因](#-structured_doc-建图与标题归因--graph-building-with-title-attribution)
-- [意图不清晰时先反问](#意图不清晰时先反问--clarify-before-answer)
+- [快速开始](#安装与快速开始--install--quickstart)
 - [API 速查](#api-速查--api-reference)
 - [项目结构](#项目结构--project-structure)
 - [开发命令](#开发命令--development)
@@ -52,6 +32,10 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 ---
 
 ## 七项设计原则 / Seven Design Principles
+
+<p align="center">
+  <img src="assets/principles-ring.svg" width="100%" alt="XingGraph 七项设计原则 / Seven Design Principles：可观测 · 可回溯 · 可控制 · 可扩展 · 可进化 · 省 token · 少幻觉"/>
+</p>
 
 | Principle | What it means |
 |---|---|
@@ -80,9 +64,7 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 | **业务系统集成方** | 把知识库接进 MCP / FastAPI | `xinggraph-mcp` 即插即用，多租户隔离 + 会话缓存 |
 | **知识图谱探索者** | 对比 GraphRAG / 纯 LLM-wiki 方案的取舍 | 中间路线：按需加深，省 token、可溯源、可对比 |
 
----
-
-## 核心特性 / Core Features
+它能做什么 / Core Features：
 
 | 能力 | 说明 | 入口 |
 |---|---|---|
@@ -91,11 +73,15 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 | **标题归因回答** (Title Attribution) | 检测到数据集用 structured_doc 建图后，自动切换专用 system prompt，回答引用文档小标题而非 wrapper 头。 | 自动，无需手工配置 |
 | **model_hop** (Keypoint-aware Hopping) | 沿产品→型号边定向跳转，型号自锚定时只返回自身，避免扩展到兄弟型号。 | WIKI 检索内置分支 |
 | **自动路由** (Auto Routing) | `search_type: null` 时按查询内容选最优策略；会话命中时短路图搜索。 | `xinggraph.recall` 默认行为 |
-| **会话/多租户** (Session Cache & Multi-tenancy) | `--user-id` 多 agent 隔离，session 缓存、trace 全程记录。 | CLI / API |
+| **会话/多租户** (Session Cache & Multi-tenancy) | `--user-id` 多 agent 隔离、session 缓存、trace 全程记录。 | CLI / API |
 
 ---
 
 ## 一个例子看懂它 / One Example to See It
+
+<p align="center">
+  <img src="assets/readme/section-overview.svg" width="100%" alt="一个例子看懂它：以医院智慧药房投标 PDF 为例的端到端流程" />
+</p>
 
 把一份**医院智慧药房投标文档**（PDF → 结构化解析 → 入图），然后问一句多主体对比问题。
 
@@ -138,6 +124,10 @@ Q: 对比 A 型号储药发药一体机 与 B 型号 的差异，以及与现有
 ---
 
 ## 图谱展示：看得懂才叫好 / Graph Visualization: Readable, Not Flashy
+
+<p align="center">
+  <img src="assets/readme/section-visualization.svg" width="100%" alt="图谱展示：六层分明 · 可搜索 · 可溯源 · 本体可见" />
+</p>
 
 图谱不是装饰品，是**检索工具**。很多知识图谱 + RAG 项目把图做得极尽华丽，但节点密密麻麻、找不到目标、指不到出处。XingGraph 反其道——**六层分明、可搜索、可溯源、本体可见**。
 
@@ -227,6 +217,10 @@ Document ──1─N──▶ Chunk ──1─1──▶ Wiki
 
 ## 工作原理 / How It Works
 
+<p align="center">
+  <img src="assets/readme/section-mechanism.svg" width="100%" alt="工作原理：PDF → 结构化切块 → 入图 → WIKI 多主体检索 → 标题归因" />
+</p>
+
 ### 建图管线 / Graph construction
 
 ```mermaid
@@ -310,7 +304,7 @@ flowchart TB
 
 ---
 
-## 安装 / Installation
+## 安装与快速开始 / Install & Quickstart
 
 要求 Python >= 3.10 且 < 3.14，推荐 `uv`：
 
@@ -318,18 +312,17 @@ flowchart TB
 uv sync --dev --all-extras --reinstall
 ```
 
-> 💡 **提示**：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
-
----
-
-## 快速开始（CLI）/ Quickstart
+然后三步跑起来：
 
 ```bash
 uv run xinggraph-cli add "XingGraph turns documents into AI memory."
 uv run xinggraph-cli cognify
-uv run xinggraph-cli search "What does xinggraph do?"
 uv run xinggraph-cli recall "Compare platform A vs B" --search-type WIKI_COMPLETION
 ```
+
+> 💡 **提示**：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
+
+常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 
 常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 

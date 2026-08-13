@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="160" viewBox="0 0 1200 160"
+     role="img" aria-labelledby="title desc">
+  <title id="title">一个例子看懂它</title>
+  <desc id="desc">以医院智慧药房投标文档为例的端到端流程 banner：询问多实体 · 多关系 · 复杂问答 → 链路追踪回答。</desc>
+
+  <defs>
+    <linearGradient id="hl" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a974ff"/>
+      <stop offset="1" stop-color="#4f7bdd"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="160" rx="14" fill="#0a0a0d"/>
+
+  <!-- LEFT: title block -->
+  <g transform="translate(48 36)">
+    <text x="0" y="0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="13" font-weight="600" fill="#a974ff" letter-spacing="3">
+      SECTION · 01
+    </text>
+    <text x="0" y="44" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="34" font-weight="800" fill="#f3f0fa">
+      一个例子看懂它
+    </text>
+    <text x="0" y="76" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="16" font-weight="500" fill="#cdc3f2">
+      询问多实体 · 多关系 · 复杂问答  →  链路追踪回答
+    </text>
+    <rect x="0" y="92" width="56" height="3" rx="1.5" fill="url(#hl)"/>
+  </g>
+
+  <!-- RIGHT: mini pipeline glyph -->
+  <g transform="translate(960 36)">
+    <text x="0" y="0" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab" letter-spacing="1">
+      pipeline
+    </text>
+    <g transform="translate(0 14)">
+      <circle cx="10" cy="20" r="9" fill="#A550FF"/>
+      <circle cx="48" cy="20" r="8" fill="#0DFF00"/>
+      <circle cx="84" cy="20" r="8" fill="#FF5CA8"/>
+      <circle cx="124" cy="20" r="8" fill="#6510F4"/>
+      <g stroke="#4f7bdd" stroke-width="1.5" fill="none">
+        <line x1="20" y1="20" x2="40" y2="20"/>
+        <line x1="56" y1="20" x2="76" y2="20"/>
+        <line x1="92" y1="20" x2="116" y2="20"/>
+      </g>
+      <text x="0" y="48" font-family="ui-monospace, monospace" font-size="10" fill="#6f6787">
+        doc · chunk · wiki · entity
+      </text>
+    </g>
+  </g>
+</svg>

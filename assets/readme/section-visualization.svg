@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="160" viewBox="0 0 1200 160"
+     role="img" aria-labelledby="title desc">
+  <title id="title">图谱展示：看得懂才叫好</title>
+  <desc id="desc">XingGraph 与 GraphRAG / LightRAG / TrustRAG / semantica 的展示哲学对比，右侧为六层节点网格预览。</desc>
+
+  <defs>
+    <linearGradient id="hl" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a974ff"/>
+      <stop offset="1" stop-color="#4f7bdd"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="160" rx="14" fill="#0a0a0d"/>
+
+  <g transform="translate(48 36)">
+    <text x="0" y="0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="13" font-weight="600" fill="#a974ff" letter-spacing="3">
+      SECTION · 02
+    </text>
+    <text x="0" y="44" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="36" font-weight="800" fill="#f3f0fa">
+      图谱展示 · 看得懂才叫好
+    </text>
+    <text x="0" y="76" font-family="ui-sans-serif, system-ui, sans-serif"
+          font-size="16" font-weight="500" fill="#cdc3f2">
+      六层分明 · 可搜索 · 可溯源 · 本体可见
+    </text>
+    <rect x="0" y="92" width="56" height="3" rx="1.5" fill="url(#hl)"/>
+  </g>
+
+  <!-- RIGHT: 3x2 node grid -->
+  <g transform="translate(1010 30)">
+    <g>
+      <rect x="0"  y="0"  width="50" height="32" rx="6" fill="#A550FF"/>
+      <rect x="56" y="0"  width="50" height="32" rx="6" fill="#0DFF00"/>
+      <rect x="112" y="0" width="50" height="32" rx="6" fill="#FF5CA8"/>
+      <rect x="0"  y="38" width="50" height="32" rx="6" fill="#6510F4"/>
+      <rect x="56" y="38" width="50" height="32" rx="6" fill="#D5C2FF"/>
+      <rect x="112" y="38" width="50" height="32" rx="6" fill="#FFB454"/>
+    </g>
+    <g stroke="#4f7bdd" stroke-width="1" fill="none" opacity="0.6">
+      <line x1="50" y1="16" x2="56" y2="16"/>
+      <line x1="106" y1="16" x2="112" y2="16"/>
+      <line x1="50" y1="54" x2="56" y2="54"/>
+      <line x1="106" y1="54" x2="112" y2="54"/>
+      <line x1="25" y1="32" x2="25" y2="38"/>
+      <line x1="81" y1="32" x2="81" y2="38"/>
+      <line x1="137" y1="32" x2="137" y2="38"/>
+    </g>
+    <text x="0" y="92" font-family="ui-monospace, monospace" font-size="10" fill="#6f6787">
+      six-layer
+    </text>
+  </g>
+</svg>

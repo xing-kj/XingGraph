@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="340" viewBox="0 0 1200 340"
+     role="img" aria-labelledby="title desc">
+  <title id="title">XingGraph — Knowledge-Graph RAG · 六层管线</title>
+  <desc id="desc">XingGraph 是一个知识图谱驱动的 AI 记忆与检索系统，左侧标题加一句话承诺，右侧是 Document→Chunk→Wiki→Entity→Type→Summary 的六层节点抽象图。</desc>
+
+  <defs>
+    <linearGradient id="hl" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a974ff"/>
+      <stop offset="1" stop-color="#4f7bdd"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="340" rx="18" fill="#0a0a0d"/>
+
+  <!-- subtle grid -->
+  <g stroke="#16122a" stroke-width="1" opacity="0.7">
+    <line x1="0" y1="85" x2="1200" y2="85"/>
+    <line x1="0" y1="170" x2="1200" y2="170"/>
+    <line x1="0" y1="255" x2="1200" y2="255"/>
+    <line x1="240" y1="0" x2="240" y2="340"/>
+    <line x1="480" y1="0" x2="480" y2="340"/>
+    <line x1="720" y1="0" x2="720" y2="340"/>
+    <line x1="960" y1="0" x2="960" y2="340"/>
+  </g>
+
+  <!-- ====== LEFT: title block (58%) ====== -->
+  <g transform="translate(64 64)">
+    <!-- category eyebrow -->
+    <g>
+      <rect x="0" y="0" width="11" height="11" rx="2" fill="#a974ff"/>
+      <text x="22" y="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="14" font-weight="600" fill="#a974ff" letter-spacing="3">
+        KNOWLEDGE-GRAPH RAG · v1.4
+      </text>
+    </g>
+
+    <!-- big title -->
+    <text x="0" y="92"
+          font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="88" font-weight="800" fill="#f3f0fa" letter-spacing="-2">
+      XingGraph
+    </text>
+
+    <!-- one-line value -->
+    <text x="2" y="146"
+          font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="22" font-weight="500" fill="#cdc3f2">
+      让 LLM 从「文档堆」进化到「会对比 · 会溯源 · 给证据」。
+    </text>
+
+    <!-- meta row -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+       font-size="15" fill="#9b93ab">
+      <text x="2" y="194">Python ≥ 3.10</text>
+      <text x="170" y="194" fill="#6f6787">·</text>
+      <text x="186" y="194">Apache-2.0</text>
+      <text x="312" y="194" fill="#6f6787">·</text>
+      <text x="328" y="194">MCP · FastAPI · Neo4j</text>
+    </g>
+
+    <!-- thin accent rule -->
+    <rect x="0" y="216" width="68" height="3" rx="1.5" fill="url(#hl)"/>
+  </g>
+
+  <!-- ====== RIGHT: six-layer pipeline proof (42%) ====== -->
+  <g transform="translate(720 60)">
+    <!-- panel background -->
+    <rect x="0" y="0" width="416" height="220" rx="14" fill="#16122a" stroke="#a974ff" stroke-width="1.5" stroke-opacity="0.35"/>
+
+    <!-- panel header -->
+    <text x="20" y="28" font-family="ui-sans-serif, system-ui, sans-serif"
+          font-size="14" font-weight="700" fill="#f3f0fa" letter-spacing="1">
+      Six-layer pipeline
+    </text>
+    <text x="20" y="46" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="11" fill="#9b93ab" letter-spacing="0.5">
+      Document → Chunk → Wiki → Entity → Type → Summary
+    </text>
+
+    <!-- nodes -->
+    <!-- Row 1: Document (root) -->
+    <g transform="translate(20 70)">
+      <circle cx="20" cy="20" r="16" fill="#A550FF"/>
+      <text x="46" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">Document</text>
+      <text x="46" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">PDF / 招标文件</text>
+    </g>
+
+    <!-- Row 2: Chunk -->
+    <g transform="translate(40 110)">
+      <circle cx="20" cy="20" r="14" fill="#0DFF00"/>
+      <text x="44" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">Chunk</text>
+      <text x="44" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">结构化切块 + titles</text>
+    </g>
+
+    <!-- Row 3: Wiki -->
+    <g transform="translate(60 150)">
+      <circle cx="20" cy="20" r="12" fill="#FF5CA8"/>
+      <text x="42" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">ChunkWiki</text>
+      <text x="42" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">章节级摘要</text>
+    </g>
+
+    <!-- Row 4: Entity -->
+    <g transform="translate(170 110)">
+      <circle cx="20" cy="20" r="14" fill="#6510F4"/>
+      <text x="44" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">Entity</text>
+      <text x="44" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">业务实体抽取</text>
+    </g>
+
+    <!-- Row 5: Type -->
+    <g transform="translate(190 150)">
+      <circle cx="20" cy="20" r="12" fill="#D5C2FF"/>
+      <text x="42" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">EntityType</text>
+      <text x="42" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">RDF/OWL 本体</text>
+    </g>
+
+    <!-- Row 6: Summary -->
+    <g transform="translate(290 130)">
+      <circle cx="20" cy="20" r="12" fill="#FFB454"/>
+      <text x="42" y="24" font-family="ui-sans-serif, system-ui, sans-serif"
+            font-size="14" font-weight="600" fill="#f3f0fa">Summary</text>
+      <text x="42" y="40" font-family="ui-monospace, monospace" font-size="11" fill="#9b93ab">文本 + 全局摘要</text>
+    </g>
+
+    <!-- connector lines (six-layer lineage: Doc→Chunk→{Wiki,Summary,Entity→Type}) -->
+    <g stroke="#4f7bdd" stroke-width="1.5" stroke-opacity="0.7" fill="none" stroke-linecap="round">
+      <!-- Document (40,90) -> Chunk (60,130) -->
+      <path d="M 52 103 C 52 118 60 118 60 116"/>
+      <!-- Chunk (60,130) -> ChunkWiki (80,170) -->
+      <path d="M 66 144 C 66 156 80 156 80 158"/>
+      <!-- Chunk (60,130) -> TextSummary (310,150) -->
+      <path d="M 74 130 C 150 130 220 150 298 150"/>
+      <!-- Chunk (60,130) -> Entity (190,130) -->
+      <path d="M 74 130 C 110 130 150 130 176 130"/>
+      <!-- Entity (190,130) -> EntityType (210,170) -->
+      <path d="M 196 144 C 196 156 210 156 210 158"/>
+    </g>
+
+    <!-- panel footer label -->
+    <text x="20" y="206" font-family="ui-monospace, monospace"
+          font-size="11" fill="#6f6787">
+      ontology-valid 节点标 绿环 · is_product 标 金点
+    </text>
+  </g>
+</svg>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 1000 930" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-<title>XingGraph 检索展示</title>
-<desc>Query splits into subjects A and B, chunks are screened (relevant ones linked, irrelevant crossed out), wikis merge into a summary box, and if the summary is insufficient the light falls back to the original chunk before generating the final answer.</desc>
+<svg viewBox="0 0 1000 930" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title id="title">XingGraph 检索展示</title>
+<desc id="desc">Query splits into subjects A and B, chunks are screened (relevant ones linked, irrelevant crossed out), wikis merge into a summary box, and if the summary is insufficient the light falls back to the original chunk before generating the final answer.</desc>
 <defs>
 <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
 <stop offset="0" stop-color="#0a0a1a"/>
