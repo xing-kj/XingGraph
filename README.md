@@ -20,6 +20,8 @@
 知识图谱驱动的 AI 记忆与检索系统 — 让 LLM 从「文档堆」进化到「会回答、会对比、会溯源，还给你看证据」。
 _AI memory & retrieval engine built on a knowledge graph — from raw documents to answers that compare, cross-reference, and show their sources._
 
+> **关键词 / Keywords**：`知识图谱 (Knowledge Graph)` · `RAG (Retrieval-Augmented Generation)` · `本体 (Ontology, RDF/OWL)` · `渐进式检索 (Progressive Retrieval)` · `结构化建图 (Structured Chunking)` · `标题归因 (Title Attribution)` · `多主体对比 (Multi-subject Comparison)` · `MCP` · `FastAPI`
+
 > 核心亮点 / Highlights
 >
 > - **WIKI 多主体渐进式检索** (`WIKI_COMPLETION`)：把一句"软件测评式"提问自动拆成多个主体，实体锚定 → 图遍历 → Wiki 汇总 → LLM 筛选 → 回答，支持跨主体横向对比。
@@ -32,14 +34,17 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 ## 目录 / Contents
 
 - [七项设计原则](#七项设计原则--seven-design-principles)
+- [谁在用](#谁在用--who-its-for)
 - [核心特性](#核心特性--core-features)
 - [一个例子看懂它](#一个例子看懂它--one-example-to-see-it)
+- [图谱展示：看得懂才叫好](#图谱展示看得懂才叫好--graph-visualization-readable-not-flashy)
 - [工作原理](#工作原理--how-it-works)
 - [为什么比 GraphRAG / 纯 LLM-wiki 更优](#为什么比-graphrag--纯-llm-wiki-更优--why-its-better-than-graphrag-and-vectorless-llmwiki)
 - [安装](#安装--installation)
 - [快速开始（CLI）](#快速开始cli--quickstart)
 - [⭐ WIKI 多主体搜索](#-wiki-多主体搜索--wiki-multi-subject-search)
 - [⭐ structured_doc 建图与标题归因](#-structured_doc-建图与标题归因--graph-building-with-title-attribution)
+- [意图不清晰时先反问](#意图不清晰时先反问--clarify-before-answer)
 - [API 速查](#api-速查--api-reference)
 - [项目结构](#项目结构--project-structure)
 - [开发命令](#开发命令--development)
@@ -58,18 +63,35 @@ _AI memory & retrieval engine built on a knowledge graph — from raw documents 
 | 💰 省 token | subject 文档白名单硬过滤，他文不入上下文 |
 | 🛡 少幻觉 | 答案绑定原文 chunk，回传参考片段 |
 
+业务术语如何进入本体、再如何反哺检索 — 一个可演化的闭环：
+
+<img src="assets/ontology-loop.svg" width="100%" alt="本体可扩展环：业务术语→RDF/OWL 本体字典→检索系统→反馈回流"/>
+
+> 💡 **提示**：术语先进本体字典，检索时用它做实体锚定；检索结果（命中/漏检）又反馈回来补全本体，越用越准。
+
+---
+
+## 谁在用 / Who It's For
+
+| 角色 | 场景 | 收获 |
+|---|---|---|
+| **RAG / LLM 应用开发者** | 文档问答、多轮记忆、引用溯源 | 可观测的渐进式检索 + 结构化 trace，不再盲调 prompt |
+| **产品 / 招标文档团队** | 大量结构化 PDF（标书、手册、方案） | `structured_doc` 保留标题层级，回答按章节精确归因 |
+| **业务系统集成方** | 把知识库接进 MCP / FastAPI | `xinggraph-mcp` 即插即用，多租户隔离 + 会话缓存 |
+| **知识图谱探索者** | 对比 GraphRAG / 纯 LLM-wiki 方案的取舍 | 中间路线：按需加深，省 token、可溯源、可对比 |
+
 ---
 
 ## 核心特性 / Core Features
 
 | 能力 | 说明 | 入口 |
 |---|---|---|
-| **WIKI 多主体搜索** | Step0 LLM 抽取主体+属性 → Step1 实体锚定 → Step2 `Entity→Chunk→Wiki` 图遍历 → Step3 Wiki 向量扩展 → Step4 LLM 筛选 → Step5 回答。多主体查询自动放宽 `top_k`，支持横向对比。 | `search_type=WIKI_COMPLETION` |
-| **structured_doc 建图** | 识别 PDF 解析 wrapper（`Doc N/total ... titles=[...]`）逐块入库，标题层级写入 chunk 元数据。 | `--chunker structured_doc` |
-| **标题归因回答** | 检测到数据集用 structured_doc 建图后，自动切换专用 system prompt，回答引用文档小标题而非 wrapper 头。 | 自动，无需手工配置 |
-| **model_hop** | 沿产品→型号边定向跳转，型号自锚定时只返回自身，避免扩展到兄弟型号。 | WIKI 检索内置分支 |
-| **自动路由** | `search_type: null` 时按查询内容选最优策略；会话命中时短路图搜索。 | `xinggraph.recall` 默认行为 |
-| **会话/多租户** | `--user-id` 多 agent 隔离，session 缓存、trace 全程记录。 | CLI / API |
+| **WIKI 多主体搜索** (Multi-subject Progressive Retrieval) | Step0 LLM 抽取主体+属性 → Step1 实体锚定 → Step2 `Entity→Chunk→Wiki` 图遍历 → Step3 Wiki 向量扩展 → Step4 LLM 筛选 → Step5 回答。多主体查询自动放宽 `top_k`，支持横向对比。 | `search_type=WIKI_COMPLETION` |
+| **structured_doc 建图** (Structured Chunking) | 识别 PDF 解析 wrapper（`Doc N/total ... titles=[...]`）逐块入库，标题层级写入 chunk 元数据。 | `--chunker structured_doc` |
+| **标题归因回答** (Title Attribution) | 检测到数据集用 structured_doc 建图后，自动切换专用 system prompt，回答引用文档小标题而非 wrapper 头。 | 自动，无需手工配置 |
+| **model_hop** (Keypoint-aware Hopping) | 沿产品→型号边定向跳转，型号自锚定时只返回自身，避免扩展到兄弟型号。 | WIKI 检索内置分支 |
+| **自动路由** (Auto Routing) | `search_type: null` 时按查询内容选最优策略；会话命中时短路图搜索。 | `xinggraph.recall` 默认行为 |
+| **会话/多租户** (Session Cache & Multi-tenancy) | `--user-id` 多 agent 隔离，session 缓存、trace 全程记录。 | CLI / API |
 
 ---
 
@@ -91,15 +113,115 @@ Q: 对比 A 型号储药发药一体机 与 B 型号 的差异，以及与现有
 4. **Step4 LLM 筛选** → 只留真正能回答差异/对接的 wiki
 5. **Step5 回答** → 输出结构化的对比 + 每条引用章节小标题
 
-**你实际看到的图谱**（示意）：
-<!-- TODO: 替换为你的图谱截图，路径 assets/demo/graph-demo.png -->
-<img src="assets/demo/graph-demo.png" alt="知识图谱效果图" width="720px"/>
+**你实际看到的图谱**（点击可放大）：
 
-**一次真实问答的链路**（示意）：
-<!-- TODO: 替换为你的问答截图，路径 assets/demo/qa-demo.png -->
-<img src="assets/demo/qa-demo.png" alt="问答链路效果图" width="720px"/>
+<p align="center">
+<img src="assets/demo/graph-demo-1.png" alt="知识图谱效果图 1" width="720px"/>
+<img src="assets/demo/graph-demo-2.png" alt="知识图谱效果图 2" width="720px"/>
+<img src="assets/demo/graph-demo-3.png" alt="知识图谱效果图 3" width="720px"/>
+<img src="assets/demo/graph-demo-4.png" alt="知识图谱效果图 4" width="720px"/>
+<img src="assets/demo/graph-demo-5.png" alt="知识图谱效果图 5" width="720px"/>
+</p>
 
-> 中文备注：上图是你贴效果图的位置。README 渲染时 GitHub 会自动按 `assets/demo/*.png` 的相对路径展示；把两张截图放进该目录即可。
+**一次真实问答的链路**（点击可放大）：
+
+<p align="center">
+<img src="assets/demo/qa-demo-1.png" alt="问答链路效果图 1" width="720px"/>
+<img src="assets/demo/qa-demo-2.png" alt="问答链路效果图 2" width="720px"/>
+<img src="assets/demo/qa-demo-3.png" alt="问答链路效果图 3" width="720px"/>
+<img src="assets/demo/qa-demo-4.png" alt="问答链路效果图 4" width="720px"/>
+<img src="assets/demo/qa-demo-5.png" alt="问答链路效果图 5" width="720px"/>
+<img src="assets/demo/qa-demo-6.png" alt="问答链路效果图 6" width="720px"/>
+<img src="assets/demo/qa-demo-7.png" alt="问答链路效果图 7" width="720px"/>
+</p>
+
+---
+
+## 图谱展示：看得懂才叫好 / Graph Visualization: Readable, Not Flashy
+
+图谱不是装饰品，是**检索工具**。很多知识图谱 + RAG 项目把图做得极尽华丽，但节点密密麻麻、找不到目标、指不到出处。XingGraph 反其道——**六层分明、可搜索、可溯源、本体可见**。
+
+### 六层节点结构 / Six-layer Node Taxonomy
+
+| 层级 | 节点类型 | 说明 | 血缘关系 |
+|---|---|---|---|
+| **Document 文档** | `TextDocument` | 入库的原始 PDF/文档，图谱的根节点 | 根 |
+| **Chunk 切块** | `DocumentChunk` | 结构化解析切块，保留 `titles` 层级元数据，是**最小可回答单元** | Document **1—N** Chunk |
+| **Wiki 章节摘要** | `ChunkWiki` | 每个 Chunk 挂自己的章节级摘要；回答先读 Wiki，信息不足才回退原文 | Chunk **1—1** Wiki |
+| **Summary 摘要** | `TextSummary` / `GlobalContextSummary` | 文本摘要 + 全局上下文摘要 | Chunk **1—N** Summary |
+| **Entity 实体** | `Entity` | 从 Chunk 抽取；一个 Chunk 连出多个实体，一个实体可被多个 Chunk 检索到 | Chunk **N—N** Entity（`contains`） |
+| **Type 类型** | `EntityType` | 实体类型归属，构成 RDF/OWL 本体骨架 | Entity **N—1** Type（`is_a`） |
+
+### 血缘关系：一条链看穿来源 / Lineage: One Chain, Full Traceability
+
+```
+Document ──1─N──▶ Chunk ──1─1──▶ Wiki
+                  Chunk ──1─N──▶ Summary
+                  Chunk ──N─N──▶ Entity ──N─1──▶ Type (is_a)
+```
+
+顺着 Story 布局从左到右，就是完整血缘链：**文档 → 切块 → 摘要/实体 → 类型**。任何实体都能反向查到"它从哪些 Chunk 检索出来"，源头永远可回溯。
+
+### 交互：图不是装饰，是工具 / Interaction: Graph as Tool, Not Decoration
+
+- **搜索直达**：输入名称或类型，Enter 跳转定位、高亮命中、淡化无关节点
+- **详情面板**：点击任意节点/边，看类型徽标、属性、provenance、Ontology valid
+- **标签分级**：`Key`（只看重要节点）/ `All`（显示全部标签）/ `Off`（隐藏，悬停临时查看）
+- **三态布局**：`Story`（固定管线列）/ `Flow`（按处理序聚簇）/ `Force`（物理模拟）
+- **多维度着色**：按 Type / Node set / User 切换，图表语义随视角变
+- **明暗主题 + 缩放适配**
+
+### 本体加持：定义过的关系一眼可见 / Ontology: What's Defined Stands Out
+
+- 与 OWL/RDF 本体匹配的节点/边标 **绿色环 + 专属色**，一眼区分"定义过本体"与"未定义"
+- 产品族 → 型号（`is_product`）打 **金色点**，只沿产品边定向跳转，绝不扩散到兄弟型号
+
+### 展示哲学对比 / Display Philosophy vs. The Rest
+
+好图的标准不是鲜艳，而是**看得懂、查得到、能溯源**：
+
+| 项目 | 展示形态 | 具体槽点 | 用户视角 |
+|---|---|---|---|
+| **GraphRAG** | 全局力导向图 + 社区色块 | 全库实体一锅烩，社区内部依然拥挤混乱；放大看不清全局、缩小看不清节点；图上无法直达原文章节 | 好看，但找不到我要的那一条 |
+| **LightRAG** | 极简力导向图 | 无管线分层、无详情面板、无搜索定位；标签相互遮挡 | 图存在，但帮不上忙 |
+| **TrustRAG** | 力导向图 + 大量证据徽标 | 信息过载，一屏全是徽标；证据链靠文字堆叠，图本身不可交互溯源 | 信得过，但看不懂 |
+| **semantica** | 精致光效/动效 UI | 过度设计：光晕、模糊、大间距压低信息密度，美过实用 | 美，但费劲 |
+| **:star: XingGraph** | Story 管线分层图 | 六层分明、搜索直达、每条边可溯源到原文 chunk | 图即工具 |
+
+### 效果图对比 / Screenshots
+
+**XingGraph：Story 管线分层图**
+
+<img src="assets/demo/compare/xinggraph.png" width="100%" alt="XingGraph 六层 Story 管线图谱"/>
+
+<details>
+<summary>GraphRAG — 全局力导向球云，找不到要的那一条（点开看图）</summary>
+
+<img src="assets/demo/compare/graphrag-1.png" width="100%" alt="GraphRAG 全局力导向图 1"/>
+<img src="assets/demo/compare/graphrag-2.png" width="100%" alt="GraphRAG 全局力导向图 2"/>
+</details>
+
+<details>
+<summary>LightRAG — 极简力导向图，无分层无定位（点开看图）</summary>
+
+<img src="assets/demo/compare/lightrag-1.png" width="100%" alt="LightRAG 力导向图 1"/>
+<img src="assets/demo/compare/lightrag-2.png" width="100%" alt="LightRAG 力导向图 2"/>
+</details>
+
+<details>
+<summary>TrustRAG — 证据徽标堆叠，信息过载（点开看图）</summary>
+
+<img src="assets/demo/compare/trustrag-1.png" width="100%" alt="TrustRAG 证据徽标图 1"/>
+<img src="assets/demo/compare/trustrag-2.png" width="100%" alt="TrustRAG 证据徽标图 2"/>
+</details>
+
+<details>
+<summary>semantica — 光效动效精美，信息密度低（点开看图）</summary>
+
+<img src="assets/demo/compare/semantica-1.png" width="100%" alt="semantica 精美 UI 1"/>
+<img src="assets/demo/compare/semantica-2.png" width="100%" alt="semantica 精美 UI 2"/>
+<img src="assets/demo/compare/semantica-3.png" width="100%" alt="semantica 精美 UI 3"/>
+</details>
 
 ---
 
@@ -137,6 +259,10 @@ Doc 1/5: len=4123, titles=[第一章 总体设计, 1.1 系统架构]
 
 `StructuredDocChunker` 每块逐字保留 wrapper 原文，`titles` 层级、`doc_index`、`total_docs` 全部进入元数据，回答阶段可据此做精确标题归因。
 
+一张图看懂从 PDF 到多存储的完整管线（图 + 向量 + SQLite 同步落地）：
+
+<img src="assets/doc-pipeline-fusion.svg" width="100%" alt="文档处理管线：PDF → Chunk → Neo4j 图 + Qdrant 向量 + SQLite 元数据"/>
+
 ### WIKI 渐进式检索 / Progressive retrieval pipeline
 
 ```mermaid
@@ -159,6 +285,10 @@ flowchart TB
 
 - 多主体查询（`subjects > 1`）自动把 `entity_top_k` 从 `8` 提至 `max(15, n×5)`，每个主体都有独立候选池，不会"只答到最大主体"。
 - 每个 retrieval 回传结构化 `trace`：`step0_llm_entities`（subjects/attributes）可被会话缓存复用，实现二次检索短路。
+
+一次 WIKI 检索的完整旅程 — 主体拆分 → 图遍历 → Wiki 汇总 → 信息不足时回退原文 chunk → 归因回答：
+
+<img src="assets/wiki-retrieval.svg" width="100%" alt="WIKI 渐进式检索：subjects A/B → 图遍历 → Wiki 汇总 → 信息不足回退 chunk → 答案+归因"/>
 
 ---
 
@@ -188,7 +318,7 @@ flowchart TB
 uv sync --dev --all-extras --reinstall
 ```
 
-> 中文备注：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
+> 💡 **提示**：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
 
 ---
 
@@ -203,7 +333,7 @@ uv run xinggraph-cli recall "Compare platform A vs B" --search-type WIKI_COMPLET
 
 常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 
-> 中文备注：`search` 是通用检索；`recall` 是面向记忆的回答式入口，`search_type` 留空时自动选最优策略。
+> 💡 **提示**：`search` 是通用检索；`recall` 是面向记忆的回答式入口，`search_type` 留空时自动选最优策略。
 
 ---
 
@@ -244,7 +374,7 @@ async def main():
 asyncio.run(main())
 ```
 
-> 中文备注：`"search_type": null` 触发自动路由；显式写 `WIKI_COMPLETION` 则绕过 selector 直走 WIKI 管线。
+> 💡 **提示**：`"search_type": null` 触发自动路由；显式写 `WIKI_COMPLETION` 则绕过 selector 直走 WIKI 管线。
 
 ### 检索 trace
 
@@ -303,6 +433,25 @@ A: 详见「第一章 总体设计」中的「1.3 安全设计」：鉴权层由
 
 ---
 
+## 意图不清晰时先反问 / Clarify Before Answer
+
+当问题太宽泛、图谱证据不足时，XingGraph 不会硬凑答案：`search()` 先看图密度，
+稀疏图触发澄清提示，先反问确认意图（如指定型号），再走完整检索出答案。
+
+<img src="assets/search-clarify.svg" width="100%" alt="意图澄清：模糊问题 → 稀疏图触发反问 → 补充型号后 → 稠密图给出答案"/>
+
+```
+Q: 这个型号 支持多大存储？          # 意图模糊，图谱证据稀疏
+A: 请问你指的是哪个型号？例如 DW-30L818 或 A/B 系列，以便精确定位。
+
+Q: DW-30L818 支持多大存储？
+A: 内置 512GB……（引用自该型号对应的文档章节）
+```
+
+> 💡 **提示**：笼统提问会被拦下来先对齐；只有证据够密，才会直接给归因答案。
+
+---
+
 ## API 速查 / API Reference
 
 | 端点 | 用途 | 关键参数 |
@@ -351,4 +500,4 @@ uv run ruff format .
 uv run python -m xinggraph.api.client  # 启动 FastAPI server
 ```
 
-> 中文备注：新增公开 API 时请同步在 `examples/python/` 补示例；CI 与本机命令一致。
+> 💡 **提示**：新增公开 API 时请同步在 `examples/python/` 补示例；CI 与本机命令一致。

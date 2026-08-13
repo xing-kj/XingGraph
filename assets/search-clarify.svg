@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 760 440" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title>search() sparse graph triggers clarification, dense graph produces answer</title>
+<desc>User asks vague question; sparse graph triggers rejection badge and clarification; after specifying DW-30L818, dense graph produces answer.</desc>
+
+<defs>
+<filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="softglow" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+
+<rect x="0" y="0" width="760" height="440" fill="#0a0a0d"/>
+
+<!-- 标题 -->
+<text x="40" y="36" font-size="18" font-weight="700" fill="#f3f0fa">XingGraph.search() — 稀疏图谱时的反问澄清</text>
+<rect x="42" y="42" width="46" height="2.5" rx="1.2" fill="#a974ff"/>
+
+<!-- ================================================================ -->
+<!-- 常驻层：Graph 窗口 + 连接线 + Answer 徽章轮廓 -->
+<!-- ================================================================ -->
+
+<!-- 四条连接线常驻暗淡 -->
+<g stroke="#3d3850" stroke-width="1" fill="none">
+  <path d="M 185 105 C 210 105, 230 120, 240 130"/>  <!-- Q1→Graph -->
+  <path d="M 440 140 L 495 120"/>                      <!-- Graph→拒绝 -->
+  <path d="M 185 340 C 210 310, 230 270, 240 230"/>   <!-- Q2→Graph -->
+  <path d="M 440 190 L 495 320"/>                      <!-- Graph→答案 -->
+</g>
+
+<!-- Graph 窗口边框（会变色） -->
+<rect x="240" y="90" width="200" height="160" rx="16" fill="#0f0d14" stroke="#554f70" stroke-width="1.5">
+  <animate attributeName="stroke" values="#554f70;#554f70;#8b5a5a;#8b5a5a;#554f70;#554f70;#a974ff;#a974ff;#554f70" keyTimes="0;0.15;0.20;0.35;0.42;0.60;0.65;0.92;1" dur="10s" repeatCount="indefinite"/>
+  <animate attributeName="stroke-width" values="1.5;1.5;2.5;2.5;1.5;1.5;3;3;1.5" keyTimes="0;0.15;0.20;0.35;0.42;0.60;0.65;0.92;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="340" y="82" font-size="9" fill="#6f6787" text-anchor="middle">Graph 图谱</text>
+
+<!-- 8个常驻节点 -->
+<g fill="#554f70" stroke="#6b6388" stroke-width="0.5">
+  <circle cx="285" cy="125" r="4"/>
+  <circle cx="325" cy="110" r="4"/>
+  <circle cx="375" cy="115" r="4"/>
+  <circle cx="410" cy="145" r="4"/>
+  <circle cx="390" cy="195" r="4"/>
+  <circle cx="325" cy="200" r="4"/>
+  <circle cx="270" cy="165" r="4"/>
+  <circle cx="350" cy="155" r="4"/>
+</g>
+
+<!-- 10条常驻边 -->
+<g stroke="#4a4560" stroke-width="1" fill="none">
+  <line x1="285" y1="125" x2="325" y2="110"/>
+  <line x1="325" y1="110" x2="375" y2="115"/>
+  <line x1="375" y1="115" x2="410" y2="145"/>
+  <line x1="410" y1="145" x2="390" y2="195"/>
+  <line x1="390" y1="195" x2="325" y2="200"/>
+  <line x1="325" y1="200" x2="270" y2="165"/>
+  <line x1="270" y1="165" x2="285" y2="125"/>
+  <line x1="325" y1="110" x2="350" y2="155"/>
+  <line x1="410" y1="145" x2="350" y2="155"/>
+  <line x1="325" y1="200" x2="350" y2="155"/>
+</g>
+
+<!-- ================================================================ -->
+<!-- 稀疏命中叠加：n2、n8 灰暗闪烁 + 连接边（t=1.2-3.8s） -->
+<!-- ================================================================ -->
+<g>
+  <circle cx="325" cy="110" r="0" fill="#7d6f9f" filter="url(#glow)">
+    <animate attributeName="r" values="0;0;9;7;7;0;0" keyTimes="0;0.12;0.20;0.25;0.32;0.38;1" dur="10s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="350" cy="155" r="0" fill="#7d6f9f" filter="url(#glow)">
+    <animate attributeName="r" values="0;0;9;7;7;0;0" keyTimes="0;0.14;0.22;0.27;0.34;0.40;1" dur="10s" repeatCount="indefinite"/>
+  </circle>
+  <line x1="325" y1="110" x2="350" y2="155" stroke="#7d6f9f" stroke-width="2" filter="url(#glow)" opacity="0">
+    <animate attributeName="opacity" values="0;0;0.7;0.7;0;0" keyTimes="0;0.15;0.22;0.32;0.38;1" dur="10s" repeatCount="indefinite"/>
+  </line>
+</g>
+
+<!-- ================================================================ -->
+<!-- 密集命中叠加：8节点依次亮紫 + 所有边亮紫（t=6-9.5s） -->
+<!-- ================================================================ -->
+
+<!-- 节点依次点亮 -->
+<g fill="#c4a6ff" filter="url(#glow)">
+  <circle cx="285" cy="125" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.62;0.66;0.70;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="325" cy="110" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.64;0.68;0.72;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="375" cy="115" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.66;0.70;0.74;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="410" cy="145" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.68;0.72;0.76;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="390" cy="195" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.70;0.74;0.78;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="325" cy="200" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.72;0.76;0.80;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="270" cy="165" r="0"><animate attributeName="r" values="0;0;10;7;7;0;0" keyTimes="0;0.74;0.78;0.82;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+  <circle cx="350" cy="155" r="0"><animate attributeName="r" values="0;0;11;8;8;0;0" keyTimes="0;0.76;0.80;0.84;0.92;0.95;1" dur="10s" repeatCount="indefinite"/></circle>
+</g>
+
+<!-- 边亮紫叠加 -->
+<g stroke="#c4a6ff" stroke-width="2.5" fill="none" filter="url(#glow)" opacity="0">
+  <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.78;0.82;0.92;0.95;1" dur="10s" repeatCount="indefinite"/>
+  <line x1="285" y1="125" x2="325" y2="110"/>
+  <line x1="325" y1="110" x2="375" y2="115"/>
+  <line x1="375" y1="115" x2="410" y2="145"/>
+  <line x1="410" y1="145" x2="390" y2="195"/>
+  <line x1="390" y1="195" x2="325" y2="200"/>
+  <line x1="325" y1="200" x2="270" y2="165"/>
+  <line x1="270" y1="165" x2="285" y2="125"/>
+  <line x1="325" y1="110" x2="350" y2="155"/>
+  <line x1="410" y1="145" x2="350" y2="155"/>
+  <line x1="325" y1="200" x2="350" y2="155"/>
+</g>
+
+<!-- ================================================================ -->
+<!-- Query1 高亮（0.5-4s）— 不常驻，只显示一次 -->
+<!-- ================================================================ -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.05;0.10;0.75;0.82;0.90;1" dur="10s" repeatCount="indefinite"/>
+  <rect x="27" y="88" width="40" height="22" rx="5" fill="#3a2566" opacity="0.4"/>
+  <rect x="73" y="88" width="108" height="22" rx="5" fill="#3a2566" opacity="0.4"/>
+  <text x="30" y="105" font-size="14" fill="#f3f0fa" font-weight="700">冰箱</text>
+  <text x="76" y="105" font-size="14" fill="#f3f0fa">规格参数是多少？</text>
+</g>
+
+<!-- Q1→Graph 连接线亮起 + 粒子 -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.08;0.12;0.28;0.35;0.40;1" dur="10s" repeatCount="indefinite"/>
+  <path d="M 185 105 C 210 105, 230 120, 240 130" stroke="#7d6f9f" stroke-width="2" fill="none" opacity="0.6"/>
+  <circle cx="0" cy="0" r="3" fill="#7d6f9f" filter="url(#glow)"><animateMotion path="M 185 105 C 210 105, 230 120, 240 130" dur="10s" repeatCount="indefinite" keyPoints="0;0.08;0.08;0.25;0.25;1;1" keyTimes="0;0.08;0.08;0.25;0.25;1;1"/></circle>
+  <circle cx="0" cy="0" r="2.5" fill="#6f6787"><animateMotion path="M 185 105 C 210 105, 230 120, 240 130" dur="10s" repeatCount="indefinite" keyPoints="0;0.10;0.10;0.28;0.28;1;1" keyTimes="0;0.08;0.08;0.25;0.25;1;1"/></circle>
+</g>
+
+<!-- ================================================================ -->
+<!-- 拒绝徽章（2-4.5s） -->
+<!-- ================================================================ -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.20;0.26;0.42;0.48;0.55;1" dur="10s" repeatCount="indefinite"/>
+  <rect x="495" y="98" width="155" height="46" rx="10" fill="#1e1418" stroke="#8b5a5a" stroke-width="1.5" filter="url(#glow)"/>
+  <circle cx="512" cy="121" r="8" fill="none" stroke="#d99090" stroke-width="1.5"/>
+  <line x1="508" y1="117" x2="516" y2="125" stroke="#d99090" stroke-width="1.5"/>
+  <line x1="516" y1="117" x2="508" y2="125" stroke="#d99090" stroke-width="1.5"/>
+  <text x="530" y="118" font-size="11" fill="#d99090" font-weight="600">拒绝回答</text>
+  <text x="530" y="134" font-size="9.5" fill="#9b7d7d">问题不清晰</text>
+  <!-- Graph→拒绝 暗红线 -->
+  <line x1="440" y1="140" x2="495" y2="121" stroke="#8b5a5a" stroke-width="2" filter="url(#glow)" stroke-dasharray="60" stroke-dashoffset="60">
+    <animate attributeName="stroke-dashoffset" values="60;60;0;0;60;60" keyTimes="0;0.20;0.28;0.42;0.48;0.55" dur="10s" repeatCount="indefinite"/>
+  </line>
+</g>
+
+<!-- ================================================================ -->
+<!-- 反问气泡（2.5-6s） -->
+<!-- ================================================================ -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0.2;0;0" keyTimes="0;0.25;0.32;0.72;0.80;0.88;1" dur="10s" repeatCount="indefinite"/>
+  <path d="M 505 50 Q 495 50 495 60 L 495 84 Q 495 94 505 94 L 560 94 L 572 100 L 584 94 L 640 94 Q 650 94 650 84 L 650 60 Q 650 50 640 50 Z" fill="#19132b" stroke="#6b4fb0" stroke-width="1.2" filter="url(#glow)"/>
+  <text x="572" y="70" font-size="11.5" fill="#cdbcf2" text-anchor="middle" font-weight="600">什么冰箱参数？</text>
+  <text x="572" y="86" font-size="11" fill="#9b93ab" text-anchor="middle">想要什么冰箱的参数</text>
+</g>
+
+<!-- ================================================================ -->
+<!-- Query2 高亮（4-8.5s）— 不常驻 -->
+<!-- ================================================================ -->
+<!-- Query2 文字（先灰显整体，后点亮关键词 DW-30L818 + 尺寸，tspan 变色无重影） -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.40;0.46;0.85;0.92;0.97;1" dur="10s" repeatCount="indefinite"/>
+  <text x="30" y="340" font-size="14"><tspan fill="#9b93ab">DW-30L818<animate attributeName="fill" values="#9b93ab;#9b93ab;#ffd166;#ffd166;#9b93ab;#9b93ab" keyTimes="0;0.46;0.56;0.85;0.92;1" dur="10s" repeatCount="indefinite"/></tspan><tspan fill="#9b93ab">的</tspan><tspan fill="#9b93ab">尺寸<animate attributeName="fill" values="#9b93ab;#9b93ab;#ffd166;#ffd166;#9b93ab;#9b93ab" keyTimes="0;0.46;0.56;0.85;0.92;1" dur="10s" repeatCount="indefinite"/></tspan><tspan fill="#9b93ab">是多少？</tspan></text>
+  <line x1="29" y1="346" x2="147" y2="346" stroke="#a974ff" stroke-width="2" filter="url(#glow)" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.46;0.56;0.85;0.92;1" dur="10s" repeatCount="indefinite"/></line>
+  <line x1="163" y1="346" x2="193" y2="346" stroke="#a974ff" stroke-width="2" filter="url(#glow)" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.46;0.56;0.85;0.92;1" dur="10s" repeatCount="indefinite"/></line>
+</g>
+
+<!-- Q2→Graph 连接线亮起 + 粒子（延迟到关键词高亮后） -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.56;0.60;0.78;0.85;0.90;1" dur="10s" repeatCount="indefinite"/>
+  <path d="M 185 340 C 210 310, 230 270, 240 230" stroke="#7c5fa8" stroke-width="2.5" fill="none" opacity="0.5" filter="url(#glow)"/>
+  <circle cx="0" cy="0" r="3" fill="#b98cff" filter="url(#glow)"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.58;0.58;0.72;0.72;1;1" keyTimes="0;0.58;0.62;0.68;0.72;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="2.5" fill="#b98cff" filter="url(#glow)"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.60;0.60;0.74;0.74;1;1" keyTimes="0;0.58;0.62;0.69;0.74;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="3.5" fill="#b98cff" filter="url(#glow)"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.62;0.62;0.76;0.76;1;1" keyTimes="0;0.58;0.62;0.70;0.76;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="2" fill="#c9a8ff"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.58;0.58;0.74;0.74;1;1" keyTimes="0;0.58;0.62;0.70;0.74;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="2.5" fill="#c9a8ff"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.64;0.64;0.78;0.78;1;1" keyTimes="0;0.58;0.62;0.72;0.78;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="3" fill="#b98cff" filter="url(#glow)"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.66;0.66;0.80;0.80;1;1" keyTimes="0;0.58;0.62;0.73;0.80;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="2.5" fill="#b98cff"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.68;0.68;0.82;0.82;1;1" keyTimes="0;0.58;0.62;0.75;0.82;0.85;1"/></circle>
+  <circle cx="0" cy="0" r="2" fill="#c9a8ff"><animateMotion path="M 185 340 C 210 310, 230 270, 240 230" dur="10s" repeatCount="indefinite" keyPoints="0;0.70;0.70;0.84;0.84;1;1" keyTimes="0;0.58;0.62;0.77;0.84;0.85;1"/></circle>
+</g>
+
+<!-- ================================================================ -->
+<!-- Graph→答案 金黄线 + 答案徽章（7.5-9.8s） -->
+<!-- ================================================================ -->
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0.2;0;0" keyTimes="0;0.75;0.80;0.95;0.98;0.99;1" dur="10s" repeatCount="indefinite"/>
+  <!-- 金黄线 -->
+  <line x1="440" y1="190" x2="495" y2="320" stroke="#ffd166" stroke-width="3.5" filter="url(#glow)" stroke-dasharray="145" stroke-dashoffset="145">
+    <animate attributeName="stroke-dashoffset" values="145;145;0;0;145;145" keyTimes="0;0.75;0.85;0.95;0.98;1" dur="10s" repeatCount="indefinite"/>
+  </line>
+  <text x="455" y="265" font-size="10" fill="#ffd166" text-anchor="middle" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.78;0.85;0.95;0.98;1" dur="10s" repeatCount="indefinite"/>命中</text>
+  <!-- 答案徽章 -->
+  <rect x="495" y="298" width="170" height="60" rx="10" fill="#13111e" stroke="#a974ff" stroke-width="2" filter="url(#softglow)"/>
+  <circle cx="513" cy="328" r="9" fill="none" stroke="#7ee787" stroke-width="1.5"/>
+  <path d="M 509 328 L 512 331 L 517 325" fill="none" stroke="#7ee787" stroke-width="1.8"/>
+  <text x="532" y="320" font-size="12" fill="#f3f0fa" font-weight="700">Answer</text>
+  <text x="532" y="336" font-size="10" fill="#9b93ab">外形尺寸</text>
+  <text x="532" y="352" font-size="11" fill="#f3f0fa" font-weight="600">595×640×1870mm</text>
+</g>
+
+<!-- ================================================================ -->
+<!-- 底部阶段标签 -->
+<!-- ================================================================ -->
+<g font-size="10">
+  <text x="40" y="420" fill="#4a4560">阶段 1：模糊提问 → 拒绝回答</text>
+  <text x="380" y="420" fill="#4a4560">阶段 2：问题清晰明确 → 图谱命中 → 返回答案</text>
+  <text x="40" y="420" fill="#cdbcf2" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.05;0.15;0.55;0.65;0.75;1" dur="10s" repeatCount="indefinite"/>阶段 1：模糊提问 → 拒绝回答</text>
+  <text x="380" y="420" fill="#cdbcf2" opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0;0" keyTimes="0;0.55;0.62;0.98;0.99;1;1" dur="10s" repeatCount="indefinite"/>阶段 2：问题清晰明确 → 图谱命中 → 返回答案</text>
+</g>
+
+</svg>

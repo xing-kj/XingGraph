@@ -4,6 +4,11 @@
 .prod.env
 xinggraph/.data/
 
+# Local-only scripts and scratch files (never pushed to GitHub)
+check_neo4j.py
+docs/svg-preview*.html
+assets/sketch_plan.txt
+
 code_pipeline_output*/
 
 # Test output files

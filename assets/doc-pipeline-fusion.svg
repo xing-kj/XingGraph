@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1400 720" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+<title>文档处理管线 · PDF 到 Chunk 到多库存储</title>
+<desc>A PDF is parsed by minerU/structured_doc into chunks, then simultaneously written to Neo4j graph, Qdrant vectors, and SQLite.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0a0a1a"/>
+<stop offset="0.5" stop-color="#140f2e"/>
+<stop offset="1" stop-color="#0a0a1a"/>
+</linearGradient>
+<linearGradient id="pipe" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#6b4fb0"/>
+<stop offset="1" stop-color="#4f7bdd"/>
+</linearGradient>
+<filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+
+<rect x="0" y="0" width="1400" height="720" fill="url(#bg)"/>
+<text x="40" y="42" font-size="21" font-weight="700" fill="#f3f0fa">文档处理管线 · PDF → Chunk → 多库存储</text>
+<rect x="42" y="52" width="46" height="3" rx="1.5" fill="#a974ff"/>
+
+<!-- PDF 原文区 -->
+<g>
+<rect x="60" y="90" width="280" height="460" rx="12" fill="#16122a" stroke="#463a66" stroke-width="1.5"/>
+<text x="80" y="118" font-size="11.5" font-weight="700" fill="#cdc3f2">原稿 PDF</text>
+<text x="80" y="144" font-size="10" fill="#ffffff" font-family="Consolas, monospace">## 医用低温保存箱使用说明书</text>
+<text x="80" y="164" font-size="9.5" fill="#9b93ab">• 使用前请仔细阅读本说明书</text>
+<text x="80" y="180" font-size="9.5" fill="#9b93ab">• 本公司保留说明书解释权</text>
+<text x="80" y="196" font-size="9.5" fill="#9b93ab">• 阅后请与发票一并妥善保存</text>
+<text x="80" y="216" font-size="10" fill="#ffffff">### 目录</text>
+<text x="80" y="234" font-size="9.5" fill="#9b93ab">规格....1  安装步骤....3</text>
+<text x="80" y="254" font-size="10" fill="#ffffff">### 规格</text>
+<text x="80" y="272" font-size="9" fill="#9b93ab" font-family="Consolas, monospace">名称 | 医用低温保存箱</text>
+<text x="80" y="288" font-size="9" fill="#9b93ab" font-family="Consolas, monospace">型号 | DW-30L818 | DW-40L568J</text>
+<text x="80" y="308" font-size="10" fill="#ffffff">### 安装步骤</text>
+<text x="80" y="326" font-size="9.5" fill="#9b93ab">• 环境温度：10℃到 32℃</text>
+<text x="80" y="342" font-size="9.5" fill="#9b93ab">• 环境湿度：低于 85%Rh</text>
+<text x="80" y="358" font-size="9.5" fill="#9b93ab">• 避免大量灰尘</text>
+<text x="80" y="374" font-size="9.5" fill="#9b93ab">• 保存箱工作海拔低于 2000m</text>
+<text x="80" y="410" font-size="10.5" fill="#6f6787">minerU 结构解析</text>
+<text x="80" y="430" font-size="10.5" fill="#6f6787">标题 / 表格 / 列表逐层提取</text>
+</g>
+
+<!-- PDF → Chunk 连线 -->
+<g stroke="#463a66" stroke-width="2.5" fill="none">
+<path id="pc1" d="M 340 320 L 380 320"/>
+</g>
+<g>
+<path d="M 340 320 L 380 320" stroke="url(#pipe)" stroke-width="3" fill="none"><animate attributeName="opacity" values="0;0;1" keyTimes="0;0.15;0.3" dur="4s" repeatCount="indefinite"/></path>
+</g>
+<g>
+<circle r="6" fill="#a974ff" filter="url(#glow)"><animateMotion dur="1.2s" begin="0s" repeatCount="indefinite"><mpath href="#pc1"/></animateMotion></circle>
+</g>
+
+<!-- Chunk 拆分区 -->
+<g>
+<rect x="380" y="90" width="340" height="460" rx="12" fill="#16122a" stroke="#4f7bdd" stroke-width="1.5" opacity="0.4">
+<animate attributeName="opacity" values="0.4;1;1" keyTimes="0;0.2;1" dur="16s" repeatCount="indefinite"/>
+<animate attributeName="stroke" values="#4f7bdd;#4f7bdd;#4f7bdd" keyTimes="0;0.2;1" dur="16s" repeatCount="indefinite"/>
+</rect>
+<text x="400" y="118" font-size="11.5" font-weight="700" fill="#cdc3f2">structured_doc / minerU 拆分</text>
+
+<!-- Chunk 1 -->
+<rect x="400" y="136" width="300" height="80" rx="8" fill="#12101e" stroke="#2a2340" stroke-width="1"/>
+<text x="414" y="156" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">Chunk 1/20: len=521</text>
+<text x="414" y="172" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">titles=['医用低温保存箱使用说明书']</text>
+<text x="414" y="190" font-size="9" fill="#9b93ab">• 使用前请仔细阅读本说明书...</text>
+
+<!-- Chunk 2 -->
+<rect x="400" y="228" width="300" height="68" rx="8" fill="#12101e" stroke="#2a2340" stroke-width="1"/>
+<text x="414" y="248" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">Chunk 2/20: len=324</text>
+<text x="414" y="264" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">titles=['医用低温保存箱使用说明书','目录']</text>
+<text x="414" y="282" font-size="9" fill="#9b93ab">规格....1  安装步骤....3  安装场所....4</text>
+
+<!-- Chunk 3 -->
+<rect x="400" y="308" width="300" height="68" rx="8" fill="#12101e" stroke="#2a2340" stroke-width="1"/>
+<text x="414" y="328" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">Chunk 3/20: len=324</text>
+<text x="414" y="344" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">titles=['医用低温保存箱使用说明书','规格']</text>
+<text x="414" y="362" font-size="9" fill="#9b93ab">&lt;table&gt;...DW-30L818...DW-40L568J...</text>
+
+<!-- Chunk 4 -->
+<rect x="400" y="388" width="300" height="80" rx="8" fill="#12101e" stroke="#2a2340" stroke-width="1"/>
+<text x="414" y="408" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">Chunk 4/20: len=324</text>
+<text x="414" y="424" font-size="9.5" fill="#cdc3f2" font-family="Consolas, monospace">titles=['医用低温保存箱使用说明书','安装步骤']</text>
+<text x="414" y="442" font-size="9" fill="#9b93ab">• 环境温度：10℃到 32℃...</text>
+
+<text x="400" y="490" font-size="9.5" fill="#6f6787">StructuredDocChunker 逐字保留 titles 层级</text>
+</g>
+
+<!-- Chunks → 三库连线 -->
+<g stroke="#463a66" stroke-width="2" fill="none">
+<path id="pc2" d="M 720 220 L 780 220"/>
+<path id="pc3" d="M 720 445 L 780 445"/>
+<path id="pc4" d="M 720 540 L 780 540"/>
+</g>
+<g>
+<path d="M 720 220 L 780 220" stroke="url(#pipe)" stroke-width="3" fill="none" opacity="0"><animate attributeName="opacity" values="0;0;1" keyTimes="0;0.4;0.55" dur="4s" repeatCount="indefinite"/></path>
+<path d="M 720 445 L 780 445" stroke="url(#pipe)" stroke-width="3" fill="none" opacity="0"><animate attributeName="opacity" values="0;0;1" keyTimes="0;0.6;0.75" dur="4s" repeatCount="indefinite"/></path>
+<path d="M 720 540 L 780 540" stroke="url(#pipe)" stroke-width="3" fill="none" opacity="0"><animate attributeName="opacity" values="0;0;1" keyTimes="0;0.8;0.95" dur="4s" repeatCount="indefinite"/></path>
+</g>
+<g>
+<circle r="5" fill="#a974ff" filter="url(#glow)"><animateMotion dur="1s" begin="1.5s" repeatCount="indefinite"><mpath href="#pc2"/></animateMotion></circle>
+<circle r="5" fill="#4f7bdd" filter="url(#glow)"><animateMotion dur="1s" begin="2.2s" repeatCount="indefinite"><mpath href="#pc3"/></animateMotion></circle>
+<circle r="5" fill="#6b4fb0" filter="url(#glow)"><animateMotion dur="1s" begin="2.8s" repeatCount="indefinite"><mpath href="#pc4"/></animateMotion></circle>
+</g>
+
+<!-- Neo4j 图谱 -->
+<g>
+<rect x="780" y="90" width="540" height="260" rx="12" fill="#16122a" stroke="#463a66" stroke-width="1.5"/>
+<text x="800" y="118" font-size="11.5" font-weight="700" fill="#cdc3f2">Neo4j 图谱</text>
+
+<!-- 主节点 -->
+<circle cx="970" cy="160" r="22" fill="#352a63" stroke="#b98cff" stroke-width="1.5"/>
+<text x="970" y="165" font-size="9.5" font-weight="700" fill="#ffffff" text-anchor="middle">医用低温保存箱</text>
+
+<!-- 二级节点 -->
+<circle cx="860" cy="210" r="14" fill="#16122a" stroke="#4f7bdd" stroke-width="1.5"/>
+<text x="860" y="214" font-size="8.5" fill="#ffffff" text-anchor="middle">目录</text>
+
+<circle cx="970" cy="240" r="14" fill="#16122a" stroke="#4f7bdd" stroke-width="1.5"/>
+<text x="970" y="244" font-size="8.5" fill="#ffffff" text-anchor="middle">规格</text>
+
+<circle cx="1080" cy="210" r="14" fill="#16122a" stroke="#4f7bdd" stroke-width="1.5"/>
+<text x="1080" y="214" font-size="8.5" fill="#ffffff" text-anchor="middle">安装步骤</text>
+
+<circle cx="1110" cy="160" r="14" fill="#16122a" stroke="#ffd166" stroke-width="1.5"/>
+<text x="1110" y="164" font-size="8.5" fill="#ffd166" text-anchor="middle">DW-30L818</text>
+
+<circle cx="1300" cy="160" r="14" fill="#16122a" stroke="#ffd166" stroke-width="1.5"/>
+<text x="1300" y="164" font-size="8.5" fill="#ffd166" text-anchor="middle">DW-40L568J</text>
+
+<!-- 子节点 wiki（粉色） -->
+<circle cx="860" cy="255" r="11" fill="#16122a" stroke="#ff8fab" stroke-width="1.5"/>
+<text x="860" y="259" font-size="7.5" fill="#ff8fab" text-anchor="middle">wiki</text>
+<circle cx="970" cy="285" r="11" fill="#16122a" stroke="#ff8fab" stroke-width="1.5"/>
+<text x="970" y="289" font-size="7.5" fill="#ff8fab" text-anchor="middle">wiki</text>
+<circle cx="1080" cy="255" r="11" fill="#16122a" stroke="#ff8fab" stroke-width="1.5"/>
+<text x="1080" y="259" font-size="7.5" fill="#ff8fab" text-anchor="middle">wiki</text>
+
+<!-- 子节点 chunk（深绿） -->
+<circle cx="860" cy="295" r="11" fill="#16122a" stroke="#2d6a4f" stroke-width="1.5"/>
+<text x="860" y="299" font-size="7.5" fill="#2d6a4f" text-anchor="middle">chunk</text>
+<circle cx="970" cy="325" r="11" fill="#16122a" stroke="#2d6a4f" stroke-width="1.5"/>
+<text x="970" y="329" font-size="7.5" fill="#2d6a4f" text-anchor="middle">chunk</text>
+<circle cx="1080" cy="295" r="11" fill="#16122a" stroke="#2d6a4f" stroke-width="1.5"/>
+<text x="1080" y="299" font-size="7.5" fill="#2d6a4f" text-anchor="middle">chunk</text>
+
+<!-- 边 is_product 黄 -->
+<line x1="992" y1="150" x2="1096" y2="150" stroke="#ffd166" stroke-width="2"/>
+<text x="1044" y="144" font-size="7.5" fill="#ffd166" text-anchor="middle">is_product</text>
+<line x1="992" y1="170" x2="1286" y2="170" stroke="#ffd166" stroke-width="2"/>
+<text x="1139" y="182" font-size="7.5" fill="#ffd166" text-anchor="middle">is_product</text>
+
+<!-- 边 contains 紫 -->
+<line x1="955" y1="178" x2="866" y2="196" stroke="#a974ff" stroke-width="2"/>
+<text x="908" y="192" font-size="7.5" fill="#a974ff" text-anchor="middle">contains</text>
+<line x1="970" y1="182" x2="970" y2="226" stroke="#a974ff" stroke-width="2"/>
+<text x="960" y="208" font-size="7.5" fill="#a974ff" text-anchor="middle">contains</text>
+<line x1="985" y1="178" x2="1066" y2="196" stroke="#a974ff" stroke-width="2"/>
+<text x="1024" y="192" font-size="7.5" fill="#a974ff" text-anchor="middle">contains</text>
+
+<!-- 二级节点 → wiki -->
+<line x1="860" y1="224" x2="860" y2="244" stroke="#ff8fab" stroke-width="1.5"/>
+<line x1="970" y1="254" x2="970" y2="274" stroke="#ff8fab" stroke-width="1.5"/>
+<line x1="1080" y1="224" x2="1080" y2="244" stroke="#ff8fab" stroke-width="1.5"/>
+
+<!-- 二级节点 → chunk -->
+<line x1="860" y1="224" x2="860" y2="284" stroke="#2d6a4f" stroke-width="1.5"/>
+<line x1="970" y1="254" x2="970" y2="314" stroke="#2d6a4f" stroke-width="1.5"/>
+<line x1="1080" y1="224" x2="1080" y2="284" stroke="#2d6a4f" stroke-width="1.5"/>
+</g>
+
+<!-- Qdrant 向量库 -->
+<g>
+<rect x="780" y="370" width="540" height="150" rx="12" fill="#16122a" stroke="#463a66" stroke-width="1.5"/>
+<text x="800" y="398" font-size="11.5" font-weight="700" fill="#cdc3f2">Qdrant 向量库</text>
+<text x="800" y="428" font-size="10" fill="#9b93ab" font-family="Consolas, monospace">[102, 43, 42, 567, 213, 5, ..., -12]</text>
+<text x="800" y="450" font-size="10" fill="#9b93ab" font-family="Consolas, monospace">[23, 55, 12, 89, 301, 7, ..., -3]</text>
+<text x="800" y="472" font-size="10" fill="#9b93ab" font-family="Consolas, monospace">[67, 12, 88, 445, 112, 9, ..., -8]</text>
+<text x="800" y="500" font-size="10" fill="#6f6787">每个 chunk 经 embedding 后写入 Qdrant 集合，语义检索用</text>
+</g>
+
+<!-- SQLite -->
+<g>
+<rect x="780" y="540" width="540" height="100" rx="12" fill="#16122a" stroke="#463a66" stroke-width="1.5"/>
+<text x="800" y="570" font-size="11.5" font-weight="700" fill="#cdc3f2">SQLite</text>
+<text x="800" y="600" font-size="11" fill="#9b93ab">chunk 原文 + wiki 摘要 + 元数据持久化</text>
+<text x="800" y="622" font-size="10.5" fill="#6f6787">titles / doc_index / total_docs 全量保留</text>
+</g>
+
+<!-- 底部说明 -->
+<text x="40" y="660" font-size="13" fill="#9b93ab">PDF 经 minerU 结构解析 → structured_doc 拆分为带标题层级的 chunks → 同时写入 Neo4j（图谱）、Qdrant（向量）、SQLite（元数据）</text>
+<text x="40" y="685" font-size="13" fill="#9b93ab">实体关系锚定 + 语义向量检索 + 原始数据回溯，三库互补，问答阶段可精确归因到章节。</text>
+</svg>
