@@ -36,6 +36,7 @@
 ## 联系方式 / Contact
 
 - GitHub: [@xing-kj](https://github.com/xing-kj)
+- 掘金 / juejin: [@xing-kj](https://juejin.cn/user/309419444030796)
 - 项目主页: [XingGraph](https://github.com/xing-kj/XingGraph)
 
 ---

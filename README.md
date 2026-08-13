@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/Ontology-RDF%2FOWL-a974ff?style=for-the-badge" alt="Ontology"/>
   <img src="https://img.shields.io/badge/MCP-Model--Context--Protocol-6b4fb0?logo=modelcontextprotocol&logoColor=white&style=for-the-badge" alt="MCP"/>
   <img src="https://img.shields.io/badge/FastAPI-API-4f7bdd?logo=fastapi&logoColor=white&style=for-the-badge" alt="FastAPI"/>
+  <a href="https://juejin.cn/user/309419444030796"><img src="https://img.shields.io/badge/juejin-@xing--kj-1e80c0?logo=juejin&logoColor=white&style=for-the-badge" alt="掘金"/></a>
 </p>
 
 <p align="center">
