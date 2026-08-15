@@ -16,6 +16,7 @@ from xinggraph.modules.users.methods import (
     get_principal_configuration as method_get_principal_configuration,
     get_principal_all_configuration as method_get_principal_all_configuration,
 )
+from xinggraph.infrastructure.llm.prompts import read_query_prompt
 
 logger = get_logger()
 
@@ -107,5 +108,28 @@ def get_configuration_router() -> APIRouter:
         configuration's data.
         """
         return await method_get_principal_all_configuration(principal_id=user.id)
+
+    @router.get("/get_prompts", response_model=dict)
+    async def get_prompts(
+        user: User = Depends(get_authenticated_user),
+    ):
+        """
+        Return the built-in prompt files used during graph building and answering.
+
+        ## Response
+        Returns the full text of the four built-in prompts:
+        - **graph_default**: entity/relationship extraction prompt (generate_graph_prompt.txt)
+        - **graph_structured_doc**: extraction prompt for structured_doc chunks
+          (generate_graph_prompt_structured_doc.txt)
+        - **answer_default**: default answering prompt (answer_simple_question.txt)
+        - **answer_structured_doc**: title-attribution answering prompt for
+          structured_doc datasets (answer_simple_question_structured_doc.txt)
+        """
+        return {
+            "graph_default": read_query_prompt("generate_graph_prompt.txt") or "",
+            "graph_structured_doc": read_query_prompt("generate_graph_prompt_structured_doc.txt") or "",
+            "answer_default": read_query_prompt("answer_simple_question.txt") or "",
+            "answer_structured_doc": read_query_prompt("answer_simple_question_structured_doc.txt") or "",
+        }
 
     return router

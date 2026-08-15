@@ -50,7 +50,13 @@ class SearchPayloadDTO(InDTO):
     )
     query: str = Field(default="What is in the document?")
     system_prompt: Optional[str] = Field(
-        default="Answer the question using the provided context. Be as brief as possible."
+        default=None,
+        description=(
+            "Custom system prompt for completion-type searches. When omitted, the backend "
+            "auto-selects the prompt: structured_doc datasets get the title-attribution "
+            "prompt (answer_simple_question_structured_doc.txt), everything else uses the "
+            "default (answer_simple_question.txt)."
+        ),
     )
     node_name: Optional[list[str]] = Field(
         default=None,

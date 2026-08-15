@@ -18,6 +18,8 @@ export type CustomPromptsMap = Record<string, string>;
 export type PromptAssignmentsMap = Record<string, string>;
 export type OntologyAssignmentsMap = Record<string, string>;
 export type ChunkerAssignmentsMap = Record<string, string>;
+export type AnswerPromptAssignmentsMap = Record<string, string>;
+export type AnswerCustomPromptsMap = Record<string, string>;
 
 export interface GraphModelsConfig {
   models: GraphModel[];
@@ -25,6 +27,8 @@ export interface GraphModelsConfig {
   promptAssignments?: PromptAssignmentsMap;
   ontologyAssignments?: OntologyAssignmentsMap;
   chunkerAssignments?: ChunkerAssignmentsMap;
+  answerPromptAssignments?: AnswerPromptAssignmentsMap;
+  answerCustomPrompts?: AnswerCustomPromptsMap;
   outdatedDatasets?: string[];
 }
 
@@ -35,6 +39,8 @@ function emptyGraphModelsConfig(): GraphModelsConfig {
     promptAssignments: {},
     ontologyAssignments: {},
     chunkerAssignments: {},
+    answerPromptAssignments: {},
+    answerCustomPrompts: {},
     outdatedDatasets: [],
   };
 }
@@ -106,6 +112,8 @@ export async function syncGraphModels(
     promptAssignments: existingConfig.promptAssignments ?? {},
     ontologyAssignments: existingConfig.ontologyAssignments ?? {},
     chunkerAssignments: existingConfig.chunkerAssignments ?? {},
+    answerPromptAssignments: existingConfig.answerPromptAssignments ?? {},
+    answerCustomPrompts: existingConfig.answerCustomPrompts ?? {},
     outdatedDatasets: existingConfig.outdatedDatasets ?? [],
   });
 }
@@ -124,6 +132,8 @@ export async function loadGraphModelsConfig(
     promptAssignments: config.promptAssignments ?? {},
     ontologyAssignments: config.ontologyAssignments ?? {},
     chunkerAssignments: config.chunkerAssignments ?? {},
+    answerPromptAssignments: config.answerPromptAssignments ?? {},
+    answerCustomPrompts: config.answerCustomPrompts ?? {},
     outdatedDatasets: config.outdatedDatasets ?? [],
   };
 }
@@ -142,6 +152,8 @@ function buildGraphModelsPayload(config: GraphModelsConfig): object {
     promptAssignments: config.promptAssignments ?? {},
     ontologyAssignments: config.ontologyAssignments ?? {},
     chunkerAssignments: config.chunkerAssignments ?? {},
+    answerPromptAssignments: config.answerPromptAssignments ?? {},
+    answerCustomPrompts: config.answerCustomPrompts ?? {},
     outdatedDatasets: config.outdatedDatasets ?? [],
   };
 }
@@ -297,5 +309,51 @@ export async function syncGraphModelsFullConfig(
   instance: XingGraphInstance,
   config: GraphModelsConfig,
 ): Promise<void> {
+  await safeUpdateConfig(instance, GRAPH_MODELS_CONFIG_NAME, buildGraphModelsPayload(config));
+}
+
+export function findAnswerPromptForDataset(
+  assignments: AnswerPromptAssignmentsMap,
+  datasetId: string,
+): string | null {
+  return assignments[datasetId] ?? null;
+}
+
+export async function assignAnswerPromptToDataset(
+  instance: XingGraphInstance,
+  datasetId: string,
+  assignment: string | null,
+): Promise<void> {
+  const config = await loadGraphModelsConfig(instance);
+  const assignments = { ...(config.answerPromptAssignments ?? {}) };
+
+  if (assignment) {
+    assignments[datasetId] = assignment;
+  } else {
+    delete assignments[datasetId];
+  }
+
+  config.answerPromptAssignments = assignments;
+  await safeUpdateConfig(instance, GRAPH_MODELS_CONFIG_NAME, buildGraphModelsPayload(config));
+}
+
+export async function saveAnswerCustomPrompt(
+  instance: XingGraphInstance,
+  name: string,
+  promptText: string,
+): Promise<void> {
+  const config = await loadGraphModelsConfig(instance);
+  config.answerCustomPrompts = { ...(config.answerCustomPrompts ?? {}), [name]: promptText };
+  await safeUpdateConfig(instance, GRAPH_MODELS_CONFIG_NAME, buildGraphModelsPayload(config));
+}
+
+export async function deleteAnswerCustomPrompt(
+  instance: XingGraphInstance,
+  name: string,
+): Promise<void> {
+  const config = await loadGraphModelsConfig(instance);
+  const prompts = { ...(config.answerCustomPrompts ?? {}) };
+  delete prompts[name];
+  config.answerCustomPrompts = prompts;
   await safeUpdateConfig(instance, GRAPH_MODELS_CONFIG_NAME, buildGraphModelsPayload(config));
 }

@@ -67,21 +67,18 @@ async def get_search_type_retriever_instance(
     system_prompt_path = kwargs.get("system_prompt_path", "answer_simple_question.txt")
     system_prompt = kwargs.get("system_prompt")
 
-    # If no explicit system_prompt was provided, check whether the dataset was
-    # ingested with structured_doc chunking. If so, use the dedicated answer
-    # prompt that teaches the LLM to leverage the chunk titles as source
-    # attribution instead of dumping raw wrapper headers into the reply.
+    # If no explicit system_prompt was provided, resolve it from the dataset's
+    # answer-prompt assignment ("auto" / "default" / "structured_doc" / custom
+    # name). Falling back to "auto": structured_doc datasets get the dedicated
+    # title-attribution prompt instead of dumping raw wrapper headers.
     if not system_prompt:
         dataset = kwargs.get("dataset")
         user = kwargs.get("user")
         if dataset and user:
-            chunker = await _get_dataset_chunker_assignment(user.id, str(dataset.id))
-            if chunker == "structured_doc":
-                from xinggraph.infrastructure.llm.prompts import read_query_prompt
-                structured_prompt = read_query_prompt("answer_simple_question_structured_doc.txt")
-                if structured_prompt:
-                    system_prompt = structured_prompt
-                    system_prompt_path = "answer_simple_question_structured_doc.txt"
+            resolved = await _get_dataset_answer_prompt(user.id, str(dataset.id))
+            if resolved:
+                system_prompt = resolved.get("content")
+                system_prompt_path = resolved.get("path") or system_prompt_path
     node_type = kwargs.get("node_type", NodeSet)
     node_name = kwargs.get("node_name")
     node_name_filter_operator = kwargs.get("node_name_filter_operator", "OR")
@@ -449,3 +446,48 @@ async def _get_dataset_chunker_assignment(user_id: UUID, dataset_id: str) -> str
         return None
     assignments = config.get("chunkerAssignments") or {}
     return assignments.get(dataset_id)
+
+
+async def _get_dataset_answer_prompt(user_id: UUID, dataset_id: str) -> dict | None:
+    """Resolve the answer prompt for a dataset.
+
+    Priority (when no explicit system_prompt was passed to the search request):
+      1. "default"         -> answer_simple_question.txt
+      2. "structured_doc"  -> answer_simple_question_structured_doc.txt
+      3. custom name       -> the saved text from answerCustomPrompts
+      4. "auto" / missing  -> follow the dataset's chunker (structured_doc
+                              datasets get the title-attribution prompt)
+
+    Returns {"content": ..., "path": ...} or None if nothing could be resolved.
+    """
+    from xinggraph.infrastructure.llm.prompts import read_query_prompt
+
+    config = await get_principal_configuration_by_name(user_id, "graph-models")
+    if not config:
+        return None
+    assignment = (config.get("answerPromptAssignments") or {}).get(dataset_id)
+
+    if assignment == "default":
+        content = read_query_prompt("answer_simple_question.txt")
+        return {"content": content, "path": "answer_simple_question.txt"} if content else None
+
+    if assignment == "structured_doc":
+        content = read_query_prompt("answer_simple_question_structured_doc.txt")
+        if content:
+            return {"content": content, "path": "answer_simple_question_structured_doc.txt"}
+        return None
+
+    if assignment:
+        custom = (config.get("answerCustomPrompts") or {}).get(assignment)
+        if custom:
+            return {"content": custom, "path": None}
+        return None
+
+    # "auto" or no assignment: follow the dataset chunker
+    chunker = await _get_dataset_chunker_assignment(user_id, dataset_id)
+    if chunker == "structured_doc":
+        content = read_query_prompt("answer_simple_question_structured_doc.txt")
+        if content:
+            return {"content": content, "path": "answer_simple_question_structured_doc.txt"}
+        return None
+    return None

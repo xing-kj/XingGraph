@@ -8,6 +8,7 @@ import UpgradeBanner from "@/ui/elements/UpgradeBanner";
 import recallKnowledge from "@/modules/datasets/recallKnowledge";
 import getSearchHistory, { type SearchHistoryEntry } from "@/modules/searchHistory/getSearchHistory";
 import { listSessions, getSessionDetail, SEARCH_SESSION_PREFIX, type SessionRow } from "@/modules/sessions/getSessions";
+import { loadGraphModelsConfig, findChunkerForDataset } from "@/modules/configuration/userConfiguration";
 import { TrackPageView, trackEvent } from "@/modules/analytics";
 import BrainSelector from "@/ui/elements/BrainSelector";
 
@@ -680,6 +681,19 @@ export default function SearchPage() {
   const effectiveDataset = selectedDataset || datasets[0] || null;
   const searchDatasetIds = effectiveDataset ? [effectiveDataset.id] : [];
 
+  // Whether the current brain was built with structured_doc chunking, which
+  // auto-switches the answer prompt to the title-attribution variant.
+  const [isStructuredDocDataset, setIsStructuredDocDataset] = useState(false);
+  useEffect(() => {
+    if (!cogniInstance || !effectiveDataset) { setIsStructuredDocDataset(false); return; }
+    loadGraphModelsConfig(cogniInstance)
+      .then((cfg) => {
+        const chunker = findChunkerForDataset(cfg.chunkerAssignments ?? {}, effectiveDataset.id);
+        setIsStructuredDocDataset(chunker === "structured_doc");
+      })
+      .catch(() => setIsStructuredDocDataset(false));
+  }, [cogniInstance, effectiveDataset?.id]);
+
   // Active conversation
   const activeConvo = allConversations.find((c) => c.id === activeConvoId) || null;
   const messages = activeConvo?.messages || [];
@@ -988,6 +1002,12 @@ export default function SearchPage() {
         {/* Input area */}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", padding: "12px 32px 16px" }}>
           <div style={{ maxWidth: 800, marginInline: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+            {scope === "documents" && isStructuredDocDataset && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, lineHeight: "18px", color: "rgba(237,236,234,0.7)", background: "rgba(188,155,255,0.10)", border: "1px solid rgba(188,155,255,0.2)", borderRadius: 8, padding: "6px 12px" }}>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}><circle cx="7" cy="7" r="6" stroke="#BC9BFF" strokeWidth="1.2" /><path d="M7 6.5v3.5M7 4.2v.1" stroke="#BC9BFF" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                <span>当前 brain 使用 <strong style={{ color: "#EDECEA" }}>Structured Doc</strong> 切片，回答会自动启用<b>标题归因</b>提示词（引用文档章节标题作来源，不吐包装头）。</span>
+              </div>
+            )}
             {/* Controls: scope pills + search type pills + brain selector */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>

@@ -134,7 +134,7 @@ When a product category clearly is the family that a PRODUCT_MODEL code belongs 
   - description: one concrete sentence using the endpoint names (e.g. "The haier biomedical medical low-temperature preservation box product family includes the DW-86L959W model.")
   - Both source_node_id and target_node_id MUST appear in the nodes list of this response; otherwise the edge will be dropped.
   - If a model belongs to multiple categories, create one is_product edge per category.
-  - Do not add outside knowledge to the description.\`;
+  - Do not add outside knowledge to the description.`;
 
 function TrashIcon() {
   return (

@@ -11,7 +11,8 @@ import createDataset from "@/modules/datasets/createDataset";
 import deleteDataset from "@/modules/datasets/deleteDataset";
 import pollDatasetStatus, { type DatasetProcessingStatus } from "@/modules/datasets/pollDatasetStatus";
 import { TrackPageView, trackEvent } from "@/modules/analytics";
-import { loadGraphModelsConfig, findPromptForDataset, findChunkerForDataset, assignPromptToDataset, assignChunkerToDataset, saveCustomPrompt, type CustomPromptsMap } from "@/modules/configuration/userConfiguration";
+import { loadGraphModelsConfig, findPromptForDataset, findChunkerForDataset, assignPromptToDataset, assignChunkerToDataset, saveCustomPrompt, findAnswerPromptForDataset, assignAnswerPromptToDataset, saveAnswerCustomPrompt, type CustomPromptsMap, type AnswerCustomPromptsMap } from "@/modules/configuration/userConfiguration";
+import getPrompts, { type PromptsContent } from "@/modules/configuration/getPrompts";
 import rememberData from "@/modules/ingestion/rememberData";
 import deleteDatasetData from "@/modules/datasets/deleteDatasetData";
 import ShareDatasetModal from "@/ui/elements/ShareDatasetModal";
@@ -133,26 +134,6 @@ function formatDate(dateStr?: string): string {
   return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-const DEFAULT_EXTRACTION_PROMPT = `You are a top-tier algorithm designed for extracting information in structured formats to build a knowledge graph.
-**Nodes** represent entities and concepts.
-**Edges** represent relationships between concepts.
-
-# 1. Labeling Nodes
-- Use basic types (e.g. "Person", not "Mathematician")
-- Node IDs should be human-readable names found in the text
-- Every node MUST include a "name" field
-
-# 2. Numerical Data and Dates
-- Use "Date" type for date entities, format "YYYY-MM-DD"
-- Properties must be in key-value format
-- Use snake_case for relationship names
-
-# 3. Coreference Resolution
-- Always use the most complete identifier for each entity throughout the knowledge graph
-
-# 4. Strict Compliance
-Adhere to the rules strictly.`;
-
 export default function DatasetsPage() {
   const { cogniInstance, isInitializing } = useCogniInstance();
   const { tenant } = useTenant();
@@ -182,6 +163,19 @@ export default function DatasetsPage() {
   const [savingPrompt, setSavingPrompt] = useState(false);
   const promptDropdownRef = useRef<HTMLDivElement>(null);
   const chunkerDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Pipeline rules panel
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [promptsContent, setPromptsContent] = useState<PromptsContent | null>(null);
+  const [answerCustomPrompts, setAnswerCustomPrompts] = useState<AnswerCustomPromptsMap>({});
+  const [selectedAnswerPrompt, setSelectedAnswerPrompt] = useState<string | null>(null);
+  const [answerDropdownOpen, setAnswerDropdownOpen] = useState(false);
+  const [showCreateAnswerPromptModal, setShowCreateAnswerPromptModal] = useState(false);
+  const [editingAnswerPromptName, setEditingAnswerPromptName] = useState("");
+  const [editingAnswerPromptText, setEditingAnswerPromptText] = useState("");
+  const [savingAnswerPrompt, setSavingAnswerPrompt] = useState(false);
+  const [copiedPromptKey, setCopiedPromptKey] = useState<string | null>(null);
+  const answerDropdownRef = useRef<HTMLDivElement>(null);
 
   // Finder selection
   const [selectedId, setSelectedId]       = useState<string | null>(null);
@@ -253,6 +247,7 @@ export default function DatasetsPage() {
       .then((cfg) => {
         setOutdated(new Set(cfg.outdatedDatasets ?? []));
         setCustomPrompts(cfg.customPrompts ?? {});
+        setAnswerCustomPrompts(cfg.answerCustomPrompts ?? {});
       })
       .catch((err) => { console.error("Failed to load graph models config:", err); });
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -263,13 +258,20 @@ export default function DatasetsPage() {
     if (!selectedId) return;
     setSelectedPromptName(null);
     setSelectedChunker(null);
+    setSelectedAnswerPrompt(null);
+    setRulesOpen(false);
     loadGraphModelsConfig(cogniInstance!)
       .then((cfg) => {
         setCustomPrompts(cfg.customPrompts ?? {});
+        setAnswerCustomPrompts(cfg.answerCustomPrompts ?? {});
         setSelectedPromptName(findPromptForDataset(cfg.promptAssignments ?? {}, selectedId));
         setSelectedChunker(findChunkerForDataset(cfg.chunkerAssignments ?? {}, selectedId));
+        setSelectedAnswerPrompt(findAnswerPromptForDataset(cfg.answerPromptAssignments ?? {}, selectedId));
       })
       .catch(() => {});
+    getPrompts(cogniInstance!)
+      .then(setPromptsContent)
+      .catch(() => setPromptsContent(null));
   }, [selectedId, cogniInstance]);
 
   // Close dropdowns on outside click
@@ -281,6 +283,10 @@ export default function DatasetsPage() {
     function h(e: MouseEvent) { if (chunkerDropdownRef.current && !chunkerDropdownRef.current.contains(e.target as Node)) setChunkerDropdownOpen(false); }
     if (chunkerDropdownOpen) { document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }
   }, [chunkerDropdownOpen]);
+  useEffect(() => {
+    function h(e: MouseEvent) { if (answerDropdownRef.current && !answerDropdownRef.current.contains(e.target as Node)) setAnswerDropdownOpen(false); }
+    if (answerDropdownOpen) { document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }
+  }, [answerDropdownOpen]);
 
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -507,6 +513,24 @@ export default function DatasetsPage() {
     }
   }
 
+  async function handleSaveAnswerPrompt() {
+    if (!cogniInstance) return;
+    const name = editingAnswerPromptName.trim();
+    if (!name) return;
+    setSavingAnswerPrompt(true);
+    try {
+      await saveAnswerCustomPrompt(cogniInstance, name, editingAnswerPromptText);
+      setAnswerCustomPrompts((prev) => ({ ...prev, [name]: editingAnswerPromptText }));
+      setSelectedAnswerPrompt(name);
+      setShowCreateAnswerPromptModal(false);
+      if (selectedId) assignAnswerPromptToDataset(cogniInstance, selectedId, name).catch(() => {});
+    } catch {
+      /* ignore */
+    } finally {
+      setSavingAnswerPrompt(false);
+    }
+  }
+
   if (loading || isInitializing) {
     return (
       <><TrackPageView page="Brains" />
@@ -518,6 +542,68 @@ export default function DatasetsPage() {
   }
 
   const selectedDataset = datasets.find((d) => d.id === selectedId) ?? null;
+
+  const isStructuredDocSelected = selectedChunker === "structured_doc";
+
+  const graphAutoFallbackPrompt = isStructuredDocSelected
+    ? (promptsContent?.graph_structured_doc ?? "")
+    : (promptsContent?.graph_default ?? "");
+  const graphPromptContent = selectedPromptName && customPrompts[selectedPromptName]
+    ? customPrompts[selectedPromptName]
+    : graphAutoFallbackPrompt;
+  const graphPromptLabel = selectedPromptName
+    ? `自定义：${selectedPromptName}`
+    : isStructuredDocSelected ? "自动-结构化版" : "自动-默认版";
+  const graphPromptNote = selectedPromptName
+    ? "使用你保存的自定义建图提示词（覆盖自动选择）。"
+    : isStructuredDocSelected
+      ? "选 Structured Doc 且未指定自定义 → 自动用结构化版（= 默认版 + #0 包装头解析规则 + 规格存为属性）。"
+      : "未指定自定义 → 使用默认建图提示词（generate_graph_prompt.txt）。";
+
+  const answerPromptContent = (() => {
+    if (selectedAnswerPrompt === "default") return promptsContent?.answer_default ?? "";
+    if (selectedAnswerPrompt === "structured_doc") return promptsContent?.answer_structured_doc ?? "";
+    if (selectedAnswerPrompt && answerCustomPrompts[selectedAnswerPrompt]) return answerCustomPrompts[selectedAnswerPrompt];
+    return isStructuredDocSelected
+      ? (promptsContent?.answer_structured_doc ?? "")
+      : (promptsContent?.answer_default ?? "");
+  })();
+  const answerPromptLabel = selectedAnswerPrompt === "default"
+    ? "默认版"
+    : selectedAnswerPrompt === "structured_doc"
+      ? "结构化版"
+      : selectedAnswerPrompt && answerCustomPrompts[selectedAnswerPrompt]
+        ? `自定义：${selectedAnswerPrompt}`
+        : "自动";
+  const answerPromptNote = selectedAnswerPrompt === "default"
+    ? "固定使用默认回答提示词（answer_simple_question.txt）。"
+    : selectedAnswerPrompt === "structured_doc"
+      ? "固定使用结构化版（标题归因，answer_simple_question_structured_doc.txt）。"
+      : selectedAnswerPrompt && answerCustomPrompts[selectedAnswerPrompt]
+        ? "使用你保存的自定义回答提示词（覆盖自动选择）。"
+        : isStructuredDocSelected
+          ? "自动 → 随切片策略：Structured Doc 数据集用标题归因版（不吐 wrapper 头）。"
+          : "自动 → 随切片策略：非 Structured Doc 用默认回答提示词。";
+
+  const chunkerDescription = (() => {
+    switch (selectedChunker) {
+      case "text": return "Text：按段落切分，适合普通文本/纯文本段落。";
+      case "structured_doc": return "Structured Doc：按文档块切分，一块 = 一个 chunk，保留 titles 标题层级；专用于解析过的结构化 PDF（带 Doc N/M 包装头）。";
+      case "langchain": return "Langchain：递归字符切分，适合代码/长文本。";
+      case "csv": return "CSV：按表格行切分，适合结构化表格数据。";
+      case "automatic":
+      default: return "Automatic：自动选择默认切分方式（按段落/固定大小），适合普通文本。";
+    }
+  })();
+
+  function copyPrompt(key: string, text: string) {
+    navigator.clipboard.writeText(text || "")
+      .then(() => {
+        setCopiedPromptKey(key);
+        setTimeout(() => setCopiedPromptKey(null), 1500);
+      })
+      .catch(() => {});
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -750,50 +836,6 @@ export default function DatasetsPage() {
                     {docsLoading ? <SkeletonBar width={36} height={8} /> : <>{selectedDocs.length} doc{selectedDocs.length !== 1 ? "s" : ""}</>}
                   </span>
                   <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-                    {/* Chunker selector */}
-                    <div ref={chunkerDropdownRef} style={{ position: "relative" }}>
-                      <button onClick={() => setChunkerDropdownOpen((v) => !v)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 500, color: "rgba(237,236,234,0.7)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                        Chunker: {selectedChunker && selectedChunker !== "automatic" ? (CHUNKER_OPTIONS.find((o) => o.value === selectedChunker)?.label ?? selectedChunker) : "Automatic"}
-                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="rgba(237,236,234,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </button>
-                      {chunkerDropdownOpen && (
-                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", minWidth: 200, zIndex: 50, overflow: "hidden" }}>
-                          {CHUNKER_OPTIONS.map((option) => (
-                            <button key={option.value} onClick={() => { setSelectedChunker(option.value); setChunkerDropdownOpen(false); if (cogniInstance && selectedId) { assignChunkerToDataset(cogniInstance, selectedId, option.value === "automatic" ? null : option.value).catch(() => {}); } }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
-                              <span style={{ width: 14, color: "#BC9BFF" }}>{selectedChunker && selectedChunker === option.value ? "✓" : !selectedChunker && option.value === "automatic" ? "✓" : ""}</span>
-                              <span style={{ flex: 1 }}>{option.label}</span>
-                              <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{option.hint}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {/* Prompt selector */}
-                    <div ref={promptDropdownRef} style={{ position: "relative" }}>
-                      <button onClick={() => setPromptDropdownOpen((v) => !v)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 500, color: "rgba(237,236,234,0.7)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                        Prompt: {selectedPromptName ?? "Automatic"}
-                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="rgba(237,236,234,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </button>
-                      {promptDropdownOpen && (
-                        <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", minWidth: 220, zIndex: 50, overflow: "hidden" }}>
-                          <button onClick={() => { setSelectedPromptName(null); setPromptDropdownOpen(false); if (cogniInstance && selectedId) assignPromptToDataset(cogniInstance, selectedId, null).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
-                            <span style={{ width: 14, color: "#BC9BFF" }}>{selectedPromptName === null ? "✓" : ""}</span>
-                            <span style={{ flex: 1 }}>Automatic</span>
-                          </button>
-                          {Object.keys(customPrompts).length > 0 && <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />}
-                          {Object.entries(customPrompts).map(([name]) => (
-                            <button key={name} onClick={() => { setSelectedPromptName(name); setPromptDropdownOpen(false); if (cogniInstance && selectedId) assignPromptToDataset(cogniInstance, selectedId, name).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
-                              <span style={{ width: 14, color: "#BC9BFF" }}>{selectedPromptName === name ? "✓" : ""}</span>
-                              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                            </button>
-                          ))}
-                          <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />
-                          <button onClick={() => { setPromptDropdownOpen(false); setEditingPromptName(`${selectedDataset?.name ?? "Brain"} Prompt`); setEditingPromptText(DEFAULT_EXTRACTION_PROMPT); setShowCreatePromptModal(true); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#BC9BFF", fontWeight: 500, display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
-                            <span style={{ width: 14 }}>+</span><span>Create new</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       className="hover:bg-[#5A0ED6] cursor-pointer"
@@ -814,6 +856,174 @@ export default function DatasetsPage() {
                 <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(237,236,234,0.55)", letterSpacing: "0.08em", textTransform: "uppercase" }}>Documents</span>
               )}
             </div>
+
+            {/* Pipeline Rules panel */}
+            {selectedDataset && (
+              <div style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, overflow: "hidden" }}>
+                <button onClick={() => setRulesOpen((v) => !v)}
+                  style={{ width: "100%", background: "none", border: "none", padding: "8px 16px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ transform: rulesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}><path d="M3 1L7 5L3 9" stroke="rgba(237,236,234,0.55)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(237,236,234,0.55)", letterSpacing: "0.08em", textTransform: "uppercase" }}>处理规则 Pipeline Rules</span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>·</span>
+                  <span style={{ fontSize: 11, color: "rgba(188,155,255,0.9)" }}>
+                    切片: {selectedChunker && selectedChunker !== "automatic" ? (CHUNKER_OPTIONS.find((o) => o.value === selectedChunker)?.label ?? selectedChunker) : "Automatic"}
+                    {" · "}建图: {graphPromptLabel}
+                    {" · "}回答: {answerPromptLabel}
+                  </span>
+                </button>
+
+                {rulesOpen && (
+                  <div style={{ padding: "4px 16px 12px", display: "flex", flexDirection: "column", gap: 10, maxHeight: "min(56vh, 560px)", overflowY: "auto" }}>
+
+                    {/* intro / clarifications */}
+                    <div style={{ fontSize: 12, lineHeight: "18px", color: "rgba(237,236,234,0.55)", background: "rgba(188,155,255,0.08)", border: "1px solid rgba(188,155,255,0.15)", borderRadius: 8, padding: "8px 12px" }}>
+                      选择 Chunker 会同时改变三件事：<strong style={{ color: "#EDECEA" }}>切片方式、建图提示词、回答提示词</strong>。
+                      「Structured Doc」= 按文档块切分（带标题包装头），建图提示词在默认版基础上加了「#0 包装头解析规则」+「规格存为属性」。
+                    </div>
+                    <div style={{ fontSize: 12, lineHeight: "18px", color: "rgba(237,236,234,0.45)" }}>
+                      提示：Chunker 是<b>建图阶段</b>的切片方式，与<b>WIKI 渐进式检索</b>（检索阶段的回答算法）不是一回事；Structured Doc 适用于解析过的结构化 PDF，与 WIKI 检索可叠加使用。
+                    </div>
+
+                    {/* ① Chunker */}
+                    <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#EDECEA" }}>① 切片策略 Chunker</span>
+                        <div ref={chunkerDropdownRef} style={{ position: "relative", marginLeft: "auto" }}>
+                          <button onClick={() => setChunkerDropdownOpen((v) => !v)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 500, color: "rgba(237,236,234,0.85)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+                            {selectedChunker && selectedChunker !== "automatic" ? (CHUNKER_OPTIONS.find((o) => o.value === selectedChunker)?.label ?? selectedChunker) : "Automatic"}
+                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="rgba(237,236,234,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          </button>
+                          {chunkerDropdownOpen && (
+                            <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", minWidth: 220, zIndex: 50, overflow: "hidden" }}>
+                              {CHUNKER_OPTIONS.map((option) => (
+                                <button key={option.value} onClick={() => { setSelectedChunker(option.value); setChunkerDropdownOpen(false); if (cogniInstance && selectedId) { assignChunkerToDataset(cogniInstance, selectedId, option.value === "automatic" ? null : option.value).catch(() => {}); } }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                  <span style={{ width: 14, color: "#BC9BFF" }}>{selectedChunker && selectedChunker === option.value ? "✓" : !selectedChunker && option.value === "automatic" ? "✓" : ""}</span>
+                                  <span style={{ flex: 1 }}>{option.label}</span>
+                                  <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{option.hint}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 12, color: "rgba(237,236,234,0.6)" }}>{chunkerDescription}</div>
+                        <div style={{ fontSize: 11, lineHeight: "16px", color: "rgba(237,236,234,0.4)", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "8px 10px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap" }}>
+{`【示例】同一段内容，不同策略切成什么样
+
+原始 PDF（解析后）:
+Doc 1/90: len=402, titles=['dw-86唯一', '技术数据']
+--- 内容开始 ---
+海尔医用低温保存箱 DW-86L959W，温度范围 -20~-86℃……
+--- 内容结束 ---
+
+┌ Automatic / Text ────────────────────┐
+│ 按段落/字数硬切 → 标题层级丢失，      │
+│ 前后两段可能被打散到不同 chunk        │
+└──────────────────────────────────────┘
+┌ Structured Doc ─────────────────────┐
+│ 一个文档块 = 一个 chunk，            │
+│ titles 层级完整保留（可精确归因到章节）│
+└──────────────────────────────────────┘`}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ② Graph prompt */}
+                    <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#EDECEA" }}>② 建图提示词（实体/关系抽取）</span>
+                        <div ref={promptDropdownRef} style={{ position: "relative", marginLeft: "auto" }}>
+                          <button onClick={() => setPromptDropdownOpen((v) => !v)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 500, color: "rgba(237,236,234,0.85)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+                            {graphPromptLabel}
+                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="rgba(237,236,234,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          </button>
+                          {promptDropdownOpen && (
+                            <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", minWidth: 240, zIndex: 50, overflow: "hidden" }}>
+                              <button onClick={() => { setSelectedPromptName(null); setPromptDropdownOpen(false); if (cogniInstance && selectedId) assignPromptToDataset(cogniInstance, selectedId, null).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                <span style={{ width: 14, color: "#BC9BFF" }}>{selectedPromptName === null ? "✓" : ""}</span>
+                                <span style={{ flex: 1 }}>自动（默认版 · 53 行）</span>
+                                <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{selectedPromptName === null && isStructuredDocSelected ? "已切结构化版" : ""}</span>
+                              </button>
+                              {Object.keys(customPrompts).length > 0 && <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />}
+                              {Object.entries(customPrompts).map(([name, text]) => (
+                                <button key={name} onClick={() => { setSelectedPromptName(name); setPromptDropdownOpen(false); if (cogniInstance && selectedId) assignPromptToDataset(cogniInstance, selectedId, name).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                  <span style={{ width: 14, color: "#BC9BFF" }}>{selectedPromptName === name ? "✓" : ""}</span>
+                                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>自定义：{name}</span>
+                                  <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{text.split("\n").length} 行</span>
+                                </button>
+                              ))}
+                              <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />
+                              <button onClick={() => { setPromptDropdownOpen(false); setEditingPromptName(`${selectedDataset?.name ?? "Brain"} Prompt`); setEditingPromptText(graphAutoFallbackPrompt); setShowCreatePromptModal(true); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#BC9BFF", fontWeight: 500, display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                <span style={{ width: 14 }}>+</span><span>新建自定义</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 11, color: "rgba(237,236,234,0.45)" }}>{graphPromptNote}</div>
+                        <div style={{ position: "relative" }}>
+                          <button onClick={() => copyPrompt("graph", graphPromptContent)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 500, color: "rgba(237,236,234,0.7)", cursor: "pointer", fontFamily: "inherit" }}>
+                            {copiedPromptKey === "graph" ? "已复制 ✓" : "📋 复制"}
+                          </button>
+                          <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", fontSize: 11, lineHeight: "16px", color: "rgba(237,236,234,0.8)", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "8px 10px", whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace" }}>{graphPromptContent}</pre>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ③ Answer prompt */}
+                    <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "rgba(255,255,255,0.03)", overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "#EDECEA" }}>③ 回答提示词（检索回答）</span>
+                        <div ref={answerDropdownRef} style={{ position: "relative", marginLeft: "auto" }}>
+                          <button onClick={() => setAnswerDropdownOpen((v) => !v)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 500, color: "rgba(237,236,234,0.85)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+                            {answerPromptLabel}
+                            <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="rgba(237,236,234,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                          </button>
+                          {answerDropdownOpen && (
+                            <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#1a1a1a", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(16px)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", minWidth: 240, zIndex: 50, overflow: "hidden" }}>
+                              {[
+                                { value: null, label: "自动（随切片策略）", note: isStructuredDocSelected ? "→ 结构化版" : "→ 默认版" },
+                                { value: "default", label: "默认版", note: "1 行" },
+                                { value: "structured_doc", label: "结构化版", note: "22 行" },
+                              ].map((opt) => (
+                                <button key={opt.value ?? "auto"} onClick={() => { setSelectedAnswerPrompt(opt.value); setAnswerDropdownOpen(false); if (cogniInstance && selectedId) assignAnswerPromptToDataset(cogniInstance, selectedId, opt.value).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                  <span style={{ width: 14, color: "#BC9BFF" }}>{selectedAnswerPrompt === opt.value ? "✓" : ""}</span>
+                                  <span style={{ flex: 1 }}>{opt.label}</span>
+                                  <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{opt.note}</span>
+                                </button>
+                              ))}
+                              {Object.keys(answerCustomPrompts).length > 0 && <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />}
+                              {Object.entries(answerCustomPrompts).map(([name, text]) => (
+                                <button key={name} onClick={() => { setSelectedAnswerPrompt(name); setAnswerDropdownOpen(false); if (cogniInstance && selectedId) assignAnswerPromptToDataset(cogniInstance, selectedId, name).catch(() => {}); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#EDECEA", display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                  <span style={{ width: 14, color: "#BC9BFF" }}>{selectedAnswerPrompt === name ? "✓" : ""}</span>
+                                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>自定义：{name}</span>
+                                  <span style={{ fontSize: 10, color: "rgba(237,236,234,0.35)" }}>{text.split("\n").length} 行</span>
+                                </button>
+                              ))}
+                              <div style={{ height: 1, background: "rgba(255,255,255,0.07)", margin: "2px 0" }} />
+                              <button onClick={() => { setAnswerDropdownOpen(false); setEditingAnswerPromptName(`${selectedDataset?.name ?? "Brain"} Answer Prompt`); setEditingAnswerPromptText(isStructuredDocSelected ? (promptsContent?.answer_structured_doc ?? "") : (promptsContent?.answer_default ?? "")); setShowCreateAnswerPromptModal(true); }} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", fontSize: 12, color: "#BC9BFF", fontWeight: 500, display: "flex", alignItems: "center", gap: 8, textAlign: "left", fontFamily: "inherit", cursor: "pointer" }}>
+                                <span style={{ width: 14 }}>+</span><span>新建自定义</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 11, color: "rgba(237,236,234,0.45)" }}>{answerPromptNote}</div>
+                        <div style={{ position: "relative" }}>
+                          <button onClick={() => copyPrompt("answer", answerPromptContent)} style={{ position: "absolute", top: 6, right: 6, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 500, color: "rgba(237,236,234,0.7)", cursor: "pointer", fontFamily: "inherit" }}>
+                            {copiedPromptKey === "answer" ? "已复制 ✓" : "📋 复制"}
+                          </button>
+                          <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", fontSize: 11, lineHeight: "16px", color: "rgba(237,236,234,0.8)", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "8px 10px", whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace" }}>{answerPromptContent}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Upload progress */}
             {isUploading && (
@@ -917,6 +1127,27 @@ export default function DatasetsPage() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button onClick={() => setShowCreatePromptModal(false)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: "rgba(237,236,234,0.7)", fontFamily: "inherit", cursor: "pointer" }}>Cancel</button>
               <button onClick={handleSavePrompt} disabled={savingPrompt || !editingPromptName.trim()} style={{ background: "#6510F4", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: "#fff", fontFamily: "inherit", cursor: "pointer" }}>{savingPrompt ? "Saving…" : "Save prompt"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create answer custom prompt modal ── */}
+      {showCreateAnswerPromptModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowCreateAnswerPromptModal(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(15,15,15,0.92)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: 24, width: 440, display: "flex", flexDirection: "column", gap: 16, boxShadow: "0 16px 48px rgba(0,0,0,0.5)" }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#EDECEA", margin: 0 }}>Create Answer Prompt</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "rgba(237,236,234,0.55)", textTransform: "uppercase", letterSpacing: 0.3 }}>Name</label>
+              <input type="text" value={editingAnswerPromptName} onChange={(e) => setEditingAnswerPromptName(e.target.value)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "8px 12px", fontSize: 14, fontFamily: "inherit", color: "#EDECEA", outline: "none" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "rgba(237,236,234,0.55)", textTransform: "uppercase", letterSpacing: 0.3 }}>Prompt</label>
+              <textarea value={editingAnswerPromptText} onChange={(e) => setEditingAnswerPromptText(e.target.value)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", color: "#EDECEA", outline: "none", resize: "vertical", minHeight: 220, lineHeight: "20px" }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowCreateAnswerPromptModal(false)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: "rgba(237,236,234,0.7)", fontFamily: "inherit", cursor: "pointer" }}>Cancel</button>
+              <button onClick={handleSaveAnswerPrompt} disabled={savingAnswerPrompt || !editingAnswerPromptName.trim()} style={{ background: "#6510F4", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 500, color: "#fff", fontFamily: "inherit", cursor: "pointer" }}>{savingAnswerPrompt ? "Saving…" : "Save prompt"}</button>
             </div>
           </div>
         </div>
