@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/readme/xinggraph-logo.png" width="160" alt="XingGraph Logo" />
+</p>
+
+<p align="center">
   <img src="assets/readme/hero.svg" width="100%" alt="XingGraph — Knowledge-Graph RAG · 六层管线 Document→Chunk→Wiki→Entity→Type→Summary" />
 </p>
 
@@ -289,6 +293,19 @@ flowchart TB
 
 ## 为什么比 GraphRAG / 纯 LLM-wiki 更优 / Why It's Better
 
+### 纯图谱路线为什么会崩？ / Why the pure-graph route collapses
+
+<img src="assets/readme/graphrag-critique.gif" width="100%" alt="纯图谱路线崩溃演示动画：属性全建边 → 图爆炸 → 因果链压成片面边 → 检索回不了原文"/>
+
+动画 30 秒讲完一个真实翻车案例：把一台冰箱 **DW-1224DC** 的所有属性和关系全部建成边（GraphRAG 式），最后检索却回不了原文：
+
+1. **属性全建成边，图先炸** —— 光一台设备就有 12 个属性（制冷剂 R290、容积 320L、-40℃ 低温、能效 1 级、噪音、压缩机……）每条都连一根边，再加上海尔工厂、兄弟型号 DW-1886C / DW-1020G 等实体群，一台设备就能让图绕成一团乱麻。
+2. **复杂因果链被压成「片面边」** —— 「单循环制冷系统 → 蒸发器分工 → 风门开关 → 温度波动」本是一条 5 环因果链；纯图谱为了省边把它压成一条片面边，中间的「单蒸发器 / 被动输送 / 风门开关」全没存进去。
+3. **检索回不了原文** —— 图里只剩被压扁的边，没有标题层级和 chunk 归属，答案只能靠猜。
+4. **结果：全是幻觉** —— 明明库里躺着原文，却答得像编出来的一样；图越大越复杂，越难溯源。
+
+这就是 XingGraph 不把所有东西都建成边的原因：**分层 Story 管线 + structured_doc 保留标题层级 + WIKI 渐进式检索**，让每条边都可溯源回原文 chunk。
+
 | 维度 | 纯 GraphRAG（微软式社区摘要） | 无向量 LLM-wiki 检索 | :star: xinggraph WIKI 渐进式 |
 |---|---|---|---|
 | **成本** | 全库 LLM 抽取 + 社区检测，一次可能烧大量 token | 低，但只做字面匹配 | 按需渐进，LLM 只在筛选/回答阶段使用，省 token |
@@ -322,8 +339,6 @@ uv run xinggraph-cli recall "Compare platform A vs B" --search-type WIKI_COMPLET
 ```
 
 > 💡 **提示**：LLM service 配置（api_key / model / endpoint）在你的配置文件或环境变量里设置；按仓库里的配置模板初始化后即可启动。
-
-常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 
 常用子命令：`add` / `remember` / `cognify` / `search` / `recall` / `memify` / `forget` / `delete` / `serve`。
 

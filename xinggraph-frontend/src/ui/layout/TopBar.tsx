@@ -91,7 +91,7 @@ export default function TopBar() {
       <div className="flex items-center" style={{ gap: 8 }}>
         {/* Logo fixed-width box so workspace aligns with right edge of navbar (240px - 24px padding) */}
         <div style={{ width: 240, flexShrink: 0, display: "flex", alignItems: "center" }}>
-          <Image src="/xinggraph-logo-black.svg" alt="XingGraph" width={110} height={24} style={{ flexShrink: 0, filter: "invert(1)" }} />
+          <Image src="/xinggraph-logo.png" alt="XingGraph" width={85} height={38} style={{ flexShrink: 0 }} />
         </div>
 
         {/* 1. Workspace switcher */}

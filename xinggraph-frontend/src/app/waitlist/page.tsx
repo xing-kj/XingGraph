@@ -1,4 +1,4 @@
-import TextLogo from "@/ui/app/logo/TextLogo";
+import Image from "next/image";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export default function WaitlistPage() {
       }}
     >
       <div className="relative z-10 flex flex-col items-center text-center max-w-lg px-8 gap-8">
-        <TextLogo width={140} height={39} color="#EDECEA" />
+        <Image src="/xinggraph-logo.png" alt="XingGraph" width={140} height={63} priority />
 
         <div className="flex flex-col gap-4">
           <h1 className="text-3xl font-semibold tracking-tight">We&apos;re at capacity</h1>
