@@ -859,9 +859,9 @@ export default function DatasetsPage() {
 
             {/* Pipeline Rules panel */}
             {selectedDataset && (
-              <div style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, overflow: "hidden" }}>
+              <div style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 1, minHeight: 0, overflowY: "auto" }}>
                 <button onClick={() => setRulesOpen((v) => !v)}
-                  style={{ width: "100%", background: "none", border: "none", padding: "8px 16px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                  style={{ position: "sticky", top: 0, zIndex: 5, width: "100%", background: "rgba(0,0,0,0.9)", border: "none", padding: "8px 16px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ transform: rulesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}><path d="M3 1L7 5L3 9" stroke="rgba(237,236,234,0.55)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(237,236,234,0.55)", letterSpacing: "0.08em", textTransform: "uppercase" }}>处理规则 Pipeline Rules</span>
                   <span style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>·</span>
@@ -873,7 +873,7 @@ export default function DatasetsPage() {
                 </button>
 
                 {rulesOpen && (
-                  <div style={{ padding: "4px 16px 12px", display: "flex", flexDirection: "column", gap: 10, maxHeight: "min(56vh, 560px)", overflowY: "auto" }}>
+                  <div style={{ padding: "4px 16px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
 
                     {/* intro / clarifications */}
                     <div style={{ fontSize: 12, lineHeight: "18px", color: "rgba(237,236,234,0.55)", background: "rgba(188,155,255,0.08)", border: "1px solid rgba(188,155,255,0.15)", borderRadius: 8, padding: "8px 12px" }}>
