@@ -415,11 +415,13 @@ class QdrantAdapter(VectorDBInterface):
         )
         results = response.points
 
+        # Qdrant's query API returns cosine similarity (higher = better); the
+        # ScoredResult contract requires cosine distance (lower = better).
         return [
             ScoredResult(
                 id=self._result_id(result),
                 payload=result.payload if include_payload else None,
-                score=float(result.score),
+                score=float(1 - result.score),
             )
             for result in results
         ]
@@ -463,7 +465,7 @@ class QdrantAdapter(VectorDBInterface):
                 ScoredResult(
                     id=self._result_id(result),
                     payload=result.payload if include_payload else None,
-                    score=float(result.score),
+                    score=float(1 - result.score),
                 )
                 for result in response.points
             ]

@@ -40,6 +40,7 @@ QUERY_ENTITY_EXTRACTION_PROMPT = """把一个用户问题拆成"主体(subjects)
 
 判定规则：
 1. subjects：问题真正围绕的具体对象/型号，通常是产品型号、品牌、具体事物名（如 HYR-111）。最多 5 个；如果问题没有这样的明确主体，就返回空数组。
+1.5. 当问题句式为"哪些设备有 X/哪些产品包含 X/什么设备用 X/X 用在哪些设备"时，X 必须作为 subject 提取（即使它在语法上是宾语），因为图谱里 X 本身就是实体节点。此时 attributes 留空或只放附加限定词（如"海尔""冰箱"）。
 2. attributes：围绕主体提出的关注点、话题或属性（如 温度、清洁维护、噪音）。最多 6 个，去重。
 3. 每个属性必须用 subject 字段指明它属于哪个主体：
    - 属性明显只针对某个主体时，subject 用那个主体的准确名字；
@@ -52,8 +53,8 @@ QUERY_ENTITY_EXTRACTION_PROMPT = """把一个用户问题拆成"主体(subjects)
 5. subjects 里的名字不要重复出现在 attributes 的 term 里。
 6. 只输出符合结构的 JSON，不要任何解释。
 7. 绝对不要输出 <think>...</think>、<thinking> 或任何推理过程。不要 markdown 代码块。只输出纯 JSON。
-8. 如果你无法从问题中识别出具体的主体对象，或者问题非常模糊以至于你无法提取出有意义的 subjects，
-   不要猜测，不要编造。你应该设置 clarification_request 为一个简短的澄清问题，用中文询问用户。
+8. 只有当你确认问题完全没有可提取的主体对象时才设置 clarification_request（例如"帮我推荐一款冰箱"这类没有具体对象/型号的问题）。
+   只要问题里出现了明确的名词短语（如"双循环制冷系统""电子膨胀阀""海尔冰箱"），就必须把它提取为 subjects，绝不能因为"不知道用户具体指哪款"就反问澄清。
 
 示例：
 问题：这三款设备（生物安全柜，加温箱，冷链运输箱）都提到了"紫外灯"功能。请对比它们在启动紫外灯时的安全联锁条件有何不同？
@@ -74,8 +75,39 @@ QUERY_ENTITY_EXTRACTION_PROMPT = """把一个用户问题拆成"主体(subjects)
   ]
 }}
 
+问题：哪些冰箱用了双循环制冷系统？
+输出：
+{{
+  "subjects": ["双循环制冷系统"],
+  "attributes": [{{"term": "冰箱", "subject": "双循环制冷系统"}}]
+}}
+
+问题：什么设备有双循环系统？
+输出：
+{{
+  "subjects": ["双循环制冷系统"],
+  "attributes": []
+}}
+
 用户问题：
 {query}
+"""
+
+
+QUERY_DISAMBIGUATION_PROMPT = """你是一个检索校验助手。用户在问题中提到了若干检索词,我们已在知识图谱中按这些词做了向量相似度检索。因为每个检索词的最高相似度分数都低于阈值,所以把候选节点发给你,请你判断:图谱中是否存在能可信代表该检索词意图的节点。
+
+判定规则:
+1. verified:候选节点里有一个的名字明显就是用户检索词所指的(名称高度一致或明显是同一事物,只是写法略有出入),可以可信地作为出发点。此时 status 填 "verified",在 selected_node 填该节点名字,disambiguation_question 留空字符串。
+2. not_found:候选节点里没有能可信代表检索词的节点。此时 status 填 "not_found",selected_node 留空,并生成一个简短的中文 disambiguation_question,告诉用户图谱中最接近的候选是什么(带名字和分数),请用户确认是否指这些,或换一个关键词。
+3. 硬性规则:若某检索词的最高分候选分数低于 {ask_threshold},必须判定 not_found 并反问,严禁猜测、严禁把一个分数太低的节点当作 verified。
+4. 每个检索词只输出一个 check,数量与输入的检索词数量一致。
+5. 只输出符合结构的 JSON,不要任何解释,不要 markdown 代码块,不要任何推理过程或思考标签。
+
+用户问题:
+{query}
+
+检索词与候选节点:
+{terms}
 """
 
 
@@ -91,6 +123,18 @@ class QueryEntities(BaseModel):
         default=None,
         description="当查询模糊/有歧义/无法识别主体时，向用户提出的澄清问题。",
     )
+
+
+class DisambiguationCheck(BaseModel):
+    source_term: str
+    role: str
+    status: str
+    selected_node: Optional[str] = None
+    disambiguation_question: Optional[str] = None
+
+
+class DisambiguationResult(BaseModel):
+    checks: List[DisambiguationCheck] = []
 
 
 class WikiCompletionRetriever(BaseRetriever):
@@ -118,6 +162,13 @@ class WikiCompletionRetriever(BaseRetriever):
         model_hop_hops: int = 5,
         wiki_screening_timeout: int = 10,
         entity_extraction_timeout: int = 20,
+        disambiguation_enabled: bool = True,
+        disambiguation_score_threshold: float = 0.75,
+        disambiguation_ask_threshold: float = 0.50,
+        disambiguation_timeout: int = 10,
+        disambiguation_max_candidates_per_term: int = 5,
+        keyword_layer_enabled: bool = True,
+        keyword_match_limit: int = 10,
         system_prompt_path: str = "answer_simple_question.txt",
         system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -137,6 +188,13 @@ class WikiCompletionRetriever(BaseRetriever):
         self.model_hop_hops = model_hop_hops
         self.wiki_screening_timeout = wiki_screening_timeout
         self.entity_extraction_timeout = entity_extraction_timeout
+        self.disambiguation_enabled = disambiguation_enabled
+        self.disambiguation_score_threshold = disambiguation_score_threshold
+        self.disambiguation_ask_threshold = disambiguation_ask_threshold
+        self.disambiguation_timeout = disambiguation_timeout
+        self.disambiguation_max_candidates_per_term = disambiguation_max_candidates_per_term
+        self.keyword_layer_enabled = keyword_layer_enabled
+        self.keyword_match_limit = keyword_match_limit
         self.system_prompt_path = system_prompt_path
         self.system_prompt = system_prompt
         self.session_id = session_id
@@ -178,15 +236,9 @@ class WikiCompletionRetriever(BaseRetriever):
             "attributes": [{"term": a["term"], "subject": a["subject"]} for a in qe["attributes"]],
         }
 
-        clarification = qe.get("clarification_request")
+        clarification = self._extraction_clarification_response(qe)
         if clarification:
-            return {
-                "entities": [],
-                "chunks": [],
-                "wikis": [],
-                "retrieval_mode": "wiki_first",
-                "clarification_request": clarification,
-            }
+            return clarification
 
         subjects_count = len(qe.get("subjects") or [])
         entity_top_k = 8 if subjects_count <= 1 else max(15, subjects_count * 5)
@@ -197,6 +249,7 @@ class WikiCompletionRetriever(BaseRetriever):
             anchor_terms
         )
         anchor_entries: List[Dict[str, Any]] = []
+        keyword_anchors = 0
         for term, term_vector in zip(anchor_terms, anchor_embeddings):
             anchor_hits = await search_collection(
                 self._unified_engine.vector,
@@ -213,6 +266,66 @@ class WikiCompletionRetriever(BaseRetriever):
                 entry["source_term"] = term
                 entry["anchor_term"] = term
                 anchor_entries.append(entry)
+        anchor_entries = self._dedupe_rank_entities(anchor_entries, entity_top_k)
+
+        # Step 1a-extra: generate confirmed anchors from top-1 vector hits.
+        # If the best vector match for a subject term scores >= 0.75, treat its
+        # canonical entity name as the confirmed anchor for all downstream steps.
+        confirmed_anchors: Dict[str, str] = {}
+        for term in anchor_terms:
+            term_entries = [
+                e
+                for e in anchor_entries
+                if e.get("source_term") == term and e.get("role") == "subject"
+            ]
+            if term_entries:
+                best = max(term_entries, key=lambda e: e.get("score", 0.0))
+                if best.get("score", 0.0) >= 0.75:
+                    confirmed_anchors[term] = best["name"]
+
+        # Store confirmed anchors in trace for downstream use (Step 2b, etc.)
+        if self.trace is not None:
+            self.trace["step1_confirmed_anchors"] = confirmed_anchors
+
+        # Keyword layer supplement: run after confirmed anchors are known.
+        # Use the confirmed anchor name (or original term if not confirmed) for
+        # exact/substring matching — this guarantees exact/substring hits on the
+        # canonical entity name.
+        if self.keyword_layer_enabled:
+            for orig_term, confirmed_term in confirmed_anchors.items():
+                for node in await self._collect_entities_by_keyword(confirmed_term):
+                    anchor_entries.append(
+                        {
+                            "id": node.get("id"),
+                            "name": node.get("name"),
+                            "description": node.get("description"),
+                            "role": "subject",
+                            "source_term": orig_term,
+                            "anchor_term": confirmed_term,
+                            "score": 1.0,
+                            "match_mode": "keyword",
+                        }
+                    )
+                    keyword_anchors += 1
+            # For terms without a confirmed anchor, fall back to original term
+            for term in anchor_terms:
+                if term not in confirmed_anchors:
+                    for node in await self._collect_entities_by_keyword(term):
+                        anchor_entries.append(
+                            {
+                                "id": node.get("id"),
+                                "name": node.get("name"),
+                                "description": node.get("description"),
+                                "role": "subject",
+                                "source_term": term,
+                                "anchor_term": term,
+                                "score": 1.0,
+                                "match_mode": "keyword",
+                            }
+                        )
+                        keyword_anchors += 1
+
+        # Re-dedupe after keyword supplement
         anchor_entries = self._dedupe_rank_entities(anchor_entries, entity_top_k)
 
         # Step 1b: attribute match — each candidate tagged with the bound subject term.
@@ -263,7 +376,7 @@ class WikiCompletionRetriever(BaseRetriever):
         # document with their bound subject (or any subject) so unrelated documents
         # (e.g. a different product manual) do not leak into the seed set.
         kept, dropped, subject_docs = await self._filter_by_subject_documents(
-            anchor_entries, candidate_entries
+            anchor_entries, candidate_entries, confirmed_anchors
         )
 
         # Merge anchors + kept candidates, rank, and fill if short.
@@ -276,6 +389,7 @@ class WikiCompletionRetriever(BaseRetriever):
 
         self.trace["step1_dedup"] = {
             "raw": len(anchor_entries) + len(candidate_entries),
+            "keyword_anchors": keyword_anchors,
             "anchors": [
                 {"name": e.get("name"), "term": e.get("anchor_term")} for e in anchor_entries
             ],
@@ -286,6 +400,23 @@ class WikiCompletionRetriever(BaseRetriever):
             "subject_docs": subject_docs,
             "unique": len(entity_hits),
         }
+
+        # Step 1e: entity disambiguation — when the best vector match for a search
+        # term scores below the threshold, feed the candidate nodes back to the LLM
+        # to check whether the graph actually holds the user's intended node. If no
+        # credible match exists, ask the user a clarifying question instead of
+        # silently retrieving a poor match. Fail-open: any error skips the step.
+        disambig = await self._disambiguate_entities(query, entity_hits)
+        if disambig and disambig.get("clarification_request"):
+            self.trace["step1e_disambiguation"] = disambig
+            return {
+                "entities": [],
+                "chunks": [],
+                "wikis": [],
+                "retrieval_mode": "wiki_first",
+                "clarification_request": disambig["clarification_request"],
+            }
+        entity_hits = self._apply_verified_selection(query, entity_hits, disambig)
 
         if not entity_hits:
             subjects_list = qe.get("subjects") or []
@@ -367,7 +498,10 @@ class WikiCompletionRetriever(BaseRetriever):
         # entity happened to be selected. Pure literal match (no synonym/semantic
         # expansion per user decision); foreign docs are left for the chunk-level
         # filter below to drop.
-        name_subject_docs = await self._collect_subject_docs_by_name(subjects)
+        confirmed_anchors = (self.trace or {}).get("step1_confirmed_anchors", {})
+        name_subject_docs = await self._collect_subject_docs_by_name(
+            subjects, confirmed_anchors
+        )
         if name_subject_docs:
             for subj, docs in name_subject_docs.items():
                 if not docs:
@@ -1155,6 +1289,27 @@ class WikiCompletionRetriever(BaseRetriever):
             pass
         return entry
 
+    @staticmethod
+    def _extraction_clarification_response(qe: dict) -> Optional[dict]:
+        """Honor the Step-0 extraction LLM's clarification only when nothing concrete
+        can anchor the retrieval (no subjects AND no attributes).
+
+        The extraction LLM is stochastic and sometimes attaches a clarification
+        question even when it already extracted a clear subject (e.g. asking
+        "which product?" for ``双循环制冷系统你不能介绍一下吗``). Proceeding with
+        the extracted subjects is better than short-circuiting into a needless ask.
+        """
+        clarification = qe.get("clarification_request")
+        if clarification and not (qe.get("subjects") or qe.get("attributes")):
+            return {
+                "entities": [],
+                "chunks": [],
+                "wikis": [],
+                "retrieval_mode": "wiki_first",
+                "clarification_request": clarification,
+            }
+        return None
+
     async def _extract_query_entities(self, query: str) -> Dict[str, Any]:
         """LLM: split query into ``subjects`` + ``attributes``, each attribute bound
         to the subject it belongs to.
@@ -1278,6 +1433,7 @@ class WikiCompletionRetriever(BaseRetriever):
         self,
         anchor_entries: List[Dict[str, Any]],
         candidate_entries: List[Dict[str, Any]],
+        confirmed_anchors: Optional[Dict[str, str]] = None,
     ) -> tuple:
         """Keep only candidates that share a source document with their bound subject
         (or with any subject when unbound). Returns ``(kept, dropped, subject_docs)``.
@@ -1381,7 +1537,7 @@ class WikiCompletionRetriever(BaseRetriever):
         return kept, dropped, subject_docs
 
     async def _collect_subject_docs_by_name(
-        self, subjects: List[str]
+        self, subjects: List[str], confirmed_anchors: Optional[Dict[str, str]] = None
     ) -> Dict[str, set]:
         """Collect subject document ids by literal (substring) entity-name match.
 
@@ -1425,8 +1581,10 @@ class WikiCompletionRetriever(BaseRetriever):
         for subj in subjects:
             if not subj:
                 continue
+            # Use confirmed anchor name for CQL query if available
+            query_term = confirmed_anchors.get(subj, subj) if confirmed_anchors else subj
             try:
-                params: Dict[str, Any] = {"subj": subj}
+                params: Dict[str, Any] = {"subj": query_term}
                 if dataset_id:
                     params["dataset_id"] = str(dataset_id)
                 rows = await graph_conn.query(cql, params)
@@ -1456,6 +1614,62 @@ class WikiCompletionRetriever(BaseRetriever):
                 result[subj] = set()
         return result
 
+    async def _collect_entities_by_keyword(self, term: str) -> List[Dict[str, Any]]:
+        """Literal keyword layer: exact + bidirectional substring match on Entity.name.
+
+        Runs over the graph (no embedding needed) so an exact/substring name hit is
+        authoritative and never drowned out by fuzzy vector scores. Each match is
+        returned as ``{"id", "name", "description"}``; fails open to an empty list.
+        """
+        if not term or not str(term).strip():
+            return []
+        graph = getattr(self, "_unified_engine", None)
+        if graph is None or not hasattr(graph, "graph"):
+            return []
+        graph_conn = graph.graph
+        if graph_conn is None or not hasattr(graph_conn, "query"):
+            return []
+
+        dataset_id = current_dataset_id.get()
+        dataset_clause = (
+            "AND $dataset_id IN coalesce(e.source_dataset_ids, [])"
+            if dataset_id
+            else ""
+        )
+        cql = (
+            "MATCH (e:Entity) "
+            "WHERE toLower(e.name) = toLower($term) "
+            "   OR toLower(e.name) CONTAINS toLower($term) "
+            "   OR toLower($term) CONTAINS toLower(e.name) "
+            f"{dataset_clause} "
+            "RETURN e.id AS id, e.name AS name, e.description AS description "
+            f"LIMIT {int(self.keyword_match_limit)}"
+        )
+        params: Dict[str, Any] = {"term": str(term).strip()}
+        if dataset_id:
+            params["dataset_id"] = str(dataset_id)
+        try:
+            rows = await graph_conn.query(cql, params)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Keyword entity lookup failed for '%s': %s", term, error)
+            return []
+        results: List[Dict[str, Any]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("name")
+            if not name:
+                continue
+            node_id = row.get("id")
+            results.append(
+                {
+                    "id": str(node_id) if node_id is not None else None,
+                    "name": str(name),
+                    "description": row.get("description"),
+                }
+            )
+        return results
+
     def _dedupe_rank_entities(
         self, entries: List[Dict[str, Any]], limit: int
     ) -> List[Dict[str, Any]]:
@@ -1469,6 +1683,11 @@ class WikiCompletionRetriever(BaseRetriever):
             score = entry.get("score")
             if not isinstance(score, (int, float)):
                 score = float("-inf")
+            # Authoritative keyword hits (exact/substring name match) outrank any
+            # fuzzy vector candidate, so a later same-name candidate never clobbers
+            # the keyword anchor during the merge below.
+            if entry.get("match_mode") == "keyword":
+                coherence = 2
             return (coherence, score)
 
         best_by_name: Dict[str, Dict[str, Any]] = {}
@@ -1543,6 +1762,192 @@ class WikiCompletionRetriever(BaseRetriever):
         except Exception as error:
             logger.debug("Failed to build trace paths: %s", error)
             return []
+
+    async def _disambiguate_entities(self, query: str, entity_hits: list) -> dict:
+        """Low-score disambiguation for Step 1e.
+
+        Groups entity hits by search term (subject / attribute / sentence). Only
+        terms whose best vector match scores below ``disambiguation_score_threshold``
+        are sent to the LLM together with their candidate nodes + scores. The LLM
+        decides whether a candidate credibly represents the user's term; if not, a
+        Chinese clarification question is produced and returned for the caller to
+        short-circuit via ``clarification_request``.
+
+        Returns:
+          - {"clarification_request": ..., "selections": ..., "checks": ...}
+            when at least one term is not confidently matched;
+          - {"selections": {...}, "checks": [...]} when every flagged term verified;
+          - {} when nothing needed LLM inspection or on any failure (fail-open).
+        """
+        if not self.disambiguation_enabled or not entity_hits:
+            return {}
+
+        groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for entry in entity_hits:
+            groups.setdefault(self._disambiguation_group_key(entry, query), []).append(entry)
+
+        # Heuristic gate: only terms whose best match is below the score threshold
+        # need LLM inspection. High-scoring terms are assumed fine (cost saver).
+        # Attribute/whole-sentence groups are intentionally not flagged: they are
+        # rarely the user's intended node and only produce clarifying-question noise.
+        flagged: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for key, entries in groups.items():
+            if key[0] != "subject":
+                continue
+            best = self._best_by_name(entries)
+            top_score = best[0][1] if best else None
+            if top_score is None or top_score < self.disambiguation_score_threshold:
+                flagged[key] = [
+                    entry for entry, _score in best[: self.disambiguation_max_candidates_per_term]
+                ]
+
+        if not flagged:
+            self._record_disambiguation_trace({"triggered": False})
+            return {}
+
+        terms_text = self._build_disambiguation_input(query, flagged)
+        prompt = QUERY_DISAMBIGUATION_PROMPT.format(
+            query=query,
+            ask_threshold=self.disambiguation_ask_threshold,
+            terms=terms_text,
+        )
+        try:
+            result = await asyncio.wait_for(
+                LLMGateway.acreate_structured_output(
+                    text_input=prompt,
+                    system_prompt=(
+                        "你是检索校验助手。判断图谱候选节点能否可信地代表用户检索词,"
+                        "只输出纯 JSON,不要任何解释。"
+                    ),
+                    response_model=DisambiguationResult,
+                ),
+                timeout=self.disambiguation_timeout,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Entity disambiguation failed (fail-open): %s", error)
+            self._record_disambiguation_trace({"triggered": True, "failed": str(error)})
+            return {}
+
+        checks = list(getattr(result, "checks", None) or [])
+        selections: Dict[Tuple[str, str], str] = {}
+        questions: List[str] = []
+        for check in checks:
+            source_term = (getattr(check, "source_term", "") or "").strip()
+            role = (getattr(check, "role", "") or "").strip()
+            status = (getattr(check, "status", "") or "").strip()
+            if not source_term:
+                continue
+            key = (role, source_term)
+            if status == "verified":
+                selected = (getattr(check, "selected_node", None) or "").strip()
+                if selected:
+                    selections[key] = selected
+            elif status == "not_found":
+                question = (getattr(check, "disambiguation_question", None) or "").strip()
+                if question:
+                    questions.append(question)
+
+        self._record_disambiguation_trace(
+            {
+                "triggered": True,
+                "flagged_terms": [
+                    self._disambiguation_group_label(k) for k in flagged
+                ],
+                "checks": [
+                    {
+                        "source_term": getattr(c, "source_term", None),
+                        "role": getattr(c, "role", None),
+                        "status": getattr(c, "status", None),
+                        "selected_node": getattr(c, "selected_node", None),
+                    }
+                    for c in checks
+                ],
+                "selections": {f"{r}:{t}": n for (r, t), n in selections.items()},
+                "clarification": bool(questions),
+            }
+        )
+
+        if questions:
+            # Ask at most one clarification per turn to avoid overwhelming the user.
+            return {
+                "clarification_request": questions[0],
+                "selections": selections,
+                "checks": checks,
+            }
+        return {"selections": selections, "checks": checks}
+
+    def _apply_verified_selection(self, query, entity_hits, disambig) -> list:
+        """Narrow each flagged term group to the LLM-verified node name.
+
+        Entries belonging to a group the LLM verified (with a ``selected_node``)
+        are kept only when their name matches the selected node, dropping similar
+        but unintended nodes (e.g. ``生物柜`` when the user meant ``生物安全柜``).
+        Groups untouched by the disambiguation pass keep all their entries.
+        """
+        selections = (disambig or {}).get("selections") or {}
+        if not selections:
+            return entity_hits
+        kept = []
+        for entry in entity_hits:
+            key = self._disambiguation_group_key(entry, query)
+            selected = selections.get(key)
+            if selected and (entry.get("name") or "") != selected:
+                continue
+            kept.append(entry)
+        return kept
+
+    @staticmethod
+    def _disambiguation_group_key(entry: Dict[str, Any], query: str) -> Tuple[str, str]:
+        """Group key ``(role, term)`` for an entity hit."""
+        role = entry.get("role") or "sentence"
+        if role == "subject":
+            term = entry.get("anchor_term") or entry.get("source_term") or query
+        elif role == "attribute":
+            term = entry.get("source_term") or query
+        else:
+            term = query
+        return (role, term)
+
+    @staticmethod
+    def _disambiguation_group_label(key: Tuple[str, str]) -> str:
+        role, term = key
+        return f"{role}:{term}"
+
+    @staticmethod
+    def _entry_score(entry: Dict[str, Any]) -> float:
+        score = entry.get("score")
+        return score if isinstance(score, (int, float)) else float("-inf")
+
+    @staticmethod
+    def _best_by_name(entries: List[Dict[str, Any]]) -> list:
+        """Dedupe entries by name, keep best score, return sorted desc by score."""
+        best = {}
+        for entry in entries:
+            name = entry.get("name")
+            if not name:
+                continue
+            score = WikiCompletionRetriever._entry_score(entry)
+            if name not in best or score > best[name][1]:
+                best[name] = (entry, score)
+        return sorted(best.values(), key=lambda pair: pair[1], reverse=True)
+
+    def _build_disambiguation_input(self, query: str, flagged: dict) -> str:
+        """Render flagged term groups (name + score) as prompt text for the LLM."""
+        parts = []
+        for idx, (key, candidates) in enumerate(flagged.items(), 1):
+            role, term = key
+            lines = [f"### 检索词 {idx}: {term} (role: {role})", "候选节点(按相似度降序):"]
+            for rank, cand in enumerate(candidates, 1):
+                name = cand.get("name") or "?"
+                score = self._entry_score(cand)
+                score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
+                lines.append(f"{rank}. {name} — {score_str}")
+            parts.append("\n".join(lines))
+        return "\n\n".join(parts)
+
+    def _record_disambiguation_trace(self, data: dict) -> None:
+        if self.trace is not None:
+            self.trace["step1e_disambiguation"] = data
 
 
 def _reject_query_batch(query_batch):

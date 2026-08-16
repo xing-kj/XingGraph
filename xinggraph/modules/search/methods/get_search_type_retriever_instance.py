@@ -156,6 +156,19 @@ async def get_search_type_retriever_instance(
                 "max_hops": retriever_specific_config.get("max_hops", 2),
                 "wiki_screening_timeout": retriever_specific_config.get("wiki_screening_timeout", 10),
                 "entity_extraction_timeout": retriever_specific_config.get("entity_extraction_timeout", 20),
+                "disambiguation_enabled": retriever_specific_config.get("disambiguation_enabled", True),
+                "disambiguation_score_threshold": retriever_specific_config.get(
+                    "disambiguation_score_threshold", 0.75
+                ),
+                "disambiguation_ask_threshold": retriever_specific_config.get(
+                    "disambiguation_ask_threshold", 0.50
+                ),
+                "disambiguation_timeout": retriever_specific_config.get("disambiguation_timeout", 10),
+                "disambiguation_max_candidates_per_term": retriever_specific_config.get(
+                    "disambiguation_max_candidates_per_term", 5
+                ),
+                "keyword_layer_enabled": retriever_specific_config.get("keyword_layer_enabled", True),
+                "keyword_match_limit": retriever_specific_config.get("keyword_match_limit", 10),
                 "system_prompt_path": system_prompt_path,
                 "system_prompt": system_prompt,
                 "session_id": session_id,
